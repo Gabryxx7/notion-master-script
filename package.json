@@ -1,0 +1,29 @@
+{
+  "name": "database-update-send-email",
+  "version": "1.0.0",
+  "description": "Send an email with SendGrid when an update is made in Notion.",
+  "main": "index.js",
+  "engines": {
+    "node": "12.x"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": ""
+  },
+  "dependencies": {
+    "@citation-js/plugin-doi": "^0.5.7",
+    "@notionhq/client": "^0.4.2",
+    "@sendgrid/mail": "^7.4.5",
+    "axios": "^0.27.2",
+    "citation-js": "^0.5.7",
+    "crossref": "^1.2.1",
+    "dotenv": "^10.0.0",
+    "jsdom": "^19.0.0",
+    "meta-doi": "^1.1.0",
+    "page-metadata-parser": "^1.1.4",
+    "url-metadata": "^2.5.0",
+    "youtube-metadata-from-url": "^1.0.3"
+  },
+  "author": "Aman Gupta",
+  "license": "MIT"
+}
