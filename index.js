@@ -38,7 +38,7 @@ setInterval(getEntriesFromNotionDatabase, 50000)
     }
     cursor = next_cursor
   }
-  console.log(`${pages.length} pages successfully fetched.`)
+  // console.log(`${pages.length} pages successfully fetched.`)
   return pages
   .map(page => {
     const statusProperty = page.properties["Script Processed"];
@@ -186,7 +186,7 @@ async function updateEntry(entry) {
 async function getUnprocessedEntries(){
   return getEntriesFromNotionDatabase().then((pages) => {
     const unprocessed = pages.filter((p) => (!p.status && p.link && p.link.url && p.link.url !== ""))
-    console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
+    // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
     return unprocessed;
   }).catch((error) => {
     console.log("ERROR filtering pages!")
