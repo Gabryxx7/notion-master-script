@@ -9,7 +9,7 @@
 
 const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
-const config = require('./config.json')
+const config = require('./config.no-commit.json')
 const axios =require('axios');
 const Cite = require('citation-js')
 const urlMetadata = require('url-metadata')
@@ -55,7 +55,7 @@ setInterval(getEntriesFromNotionDatabase, 50000)
       .join("");
       const link = page.properties["Link"]
       const author = page.properties["Author/Channel"].multi_select
-    // console.log(`Status ${status} ${status}`);
+    // console.log(`Link ${link}`);
     return {
       page: page,
       status,
@@ -136,14 +136,12 @@ async function getMetadata(url) {
 }
 
 async function updateEntry(entry) {
+  // console.log(entry)
   getMetadata(entry.link.url).then((metadata) =>{
     const authors = metadata.author.map((x) => {return {'name': x}});
-    const updatedPage = {
+    let updatedPage = {
       page_id: entry.page.id,
       properties: {
-        'Script Processed':{
-          checkbox: true
-        },
         'Name': {
           title: [
             {
@@ -165,20 +163,49 @@ async function updateEntry(entry) {
       } 
     };
     console.log(updatedPage)
-    const response = notion.pages.update(updatedPage);
+    notion.pages.update(updatedPage).then((response) => {
+      updatedPage = {
+        page_id: entry.page.id,
+        properties: {
+          'Script Processed':{
+            checkbox: true
+          }
+        } 
+      };
+      response = notion.pages.update(updatedPage).then((response) => {
+        console.log("Page updated!")
+        console.log(response);        
+      }).catch((error) => {
+        console.log("Error updating page AGAIN!")
+        console.log(error)
+      });;
+    }).catch((error) => {
+      console.log("Error updating page!")
+      console.log(error)
+    });
   }).catch((error) => {
-    console.log("Error updating page!")
-    console.log(error.body)
+    console.log("Error getting link metadata!")
+    console.log(error)
   });
 }
 
 // // addItem("Yurts in Big Sur, California")
 async function getUnprocessedEntries(){
-  return await getEntriesFromNotionDatabase().then((pages) => {
-    return pages.filter((p) => !p.status)
-  })
+  return getEntriesFromNotionDatabase().then((pages) => {
+    const unprocessed = pages.filter((p) => (!p.status && p.link && p.link.url && p.link.url !== ""))
+    console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
+    return unprocessed;
+  }).catch((error) => console.log("ERROR filtering pages!"))
 }
 
-getUnprocessedEntries()
-.then((x) => x.map((entry) => updateEntry(entry)))
-.catch((error) => console.log("ERROR!"))
+async function updateUnprocessedEntries(){
+  getUnprocessedEntries()
+  .then((x) => x.map((entry) => updateEntry(entry)))
+  .catch((error) => console.log("ERROR getting pages!"))
+}
+
+
+updateUnprocessedEntries()
+setInterval(updateUnprocessedEntries, 5000)
+
+
