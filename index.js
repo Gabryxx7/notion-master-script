@@ -1,12 +1,4 @@
-/* ================================================================================
-
-	database-update-send-email.
-  
-  Glitch example: https://glitch.com/edit/#!/notion-database-email-update
-  Find the official Notion API client @ https://github.com/makenotion/notion-sdk-js/
-
-================================================================================ */
-
+#!/usr/bin/env node
 const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
 const config = require('./config.no-commit.json')
@@ -195,13 +187,19 @@ async function getUnprocessedEntries(){
     const unprocessed = pages.filter((p) => (!p.status && p.link && p.link.url && p.link.url !== ""))
     console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
     return unprocessed;
-  }).catch((error) => console.log("ERROR filtering pages!"))
+  }).catch((error) => {
+    console.log("ERROR filtering pages!")
+    console.log(error);
+  })
 }
 
 async function updateUnprocessedEntries(){
   getUnprocessedEntries()
   .then((x) => x.map((entry) => updateEntry(entry)))
-  .catch((error) => console.log("ERROR getting pages!"))
+  .catch((error) => {
+    console.log("ERROR getting pages!");
+    console.log(error);
+  })
 }
 
 
