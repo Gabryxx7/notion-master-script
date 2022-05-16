@@ -5,6 +5,7 @@ const config = require('./config.no-commit.json')
 const axios =require('axios');
 const Cite = require('citation-js')
 const urlMetadata = require('url-metadata')
+const winston = require('winston');
 
 dotenv.config()
 const notion = new Client({ auth: config.NOTION_KEY })

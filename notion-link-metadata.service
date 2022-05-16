@@ -4,9 +4,9 @@ Description=Notion Metadata Plugin
 [Service]
 ExecStart=/home/gabryxx7/repos/notion-link-metadata/index.js
 Restart=always
-User=nobody
+User=gabryxx7
 # Note Debian/Ubuntu uses 'nogroup', RHEL/Fedora uses 'nobody'
-Group=nogroup
+Group=gabryxx7
 Environment=PATH=/usr/bin:/usr/local/bin
 Environment=NODE_ENV=production
 WorkingDirectory=/home/gabryxx7/repos/notion-link-metadata/
