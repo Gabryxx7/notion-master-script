@@ -108,10 +108,15 @@ async function getURLMetadata(url){
   };
 }
 
-async function getMetadata(url) {
+async function getMetadata(entry) {
+  // console.log(entry);
+  if(!entry.link.url || entry.link.url === ""){
+    entry.link.url = entry.title;
+  }
+  let url = entry.link.url;
   let data = {};
   let type = "";
-  if(url.toLowerCase().includes("youtub")){
+  if(url.toLowerCase().includes("youtu")){
     data = await getYoutubeMetadata(url);
     type="Youtube";
   }
@@ -125,12 +130,13 @@ async function getMetadata(url) {
   }
   console.log(`Got ${type} metadata from: ${url}`);
   console.log(data);
+  data.url = url;
   return data;
 }
 
 async function updateEntry(entry) {
   // console.log(entry)
-  getMetadata(entry.link.url).then((metadata) =>{
+  getMetadata(entry).then((metadata) =>{
     const authors = metadata.author.map((x) => {return {'name': x}});
     let updatedPage = {
       page_id: entry.page.id,
@@ -149,9 +155,12 @@ async function updateEntry(entry) {
         },
         'Type': {
           select:
-            {
-              name: metadata.type
-            }
+          {
+            name: metadata.type
+          }
+        },
+        'Link': {
+          url: metadata.url
         }
       } 
     };
@@ -185,7 +194,7 @@ async function updateEntry(entry) {
 // // addItem("Yurts in Big Sur, California")
 async function getUnprocessedEntries(){
   return getEntriesFromNotionDatabase().then((pages) => {
-    const unprocessed = pages.filter((p) => (!p.status && p.link && p.link.url && p.link.url !== ""))
+    const unprocessed = pages.filter((p) => (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== "")))
     // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
     return unprocessed;
   }).catch((error) => {
