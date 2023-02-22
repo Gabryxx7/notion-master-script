@@ -2,218 +2,190 @@
 const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
 const config = require('./config.no-commit.json')
-const axios =require('axios');
-const Cite = require('citation-js')
-const urlMetadata = require('url-metadata')
-const winston = require('winston');
+const { Utils, ScriptStatus, ScriptEnabledStatus, PropsHelper, NotionHelper } = require("./utils.js")
 
 dotenv.config()
+// for(let key in config.availableScripts){
+//   eval(`const ${config.AVAILABLE_SCRIPTS[key].className} = require('${config.AVAILABLE_SCRIPTS[key].path}')`)
+// }
 const notion = new Client({ auth: config.NOTION_KEY })
 
-const databaseId = config.NOTION_DATABASE_ID
 
-// /**
-//  * Initialize local data store.
-//  * Then poll for changes every 5 seconds (5000 milliseconds).
-//  */
-setInterval(getEntriesFromNotionDatabase, 50000)
-
-/**
- * Gets tasks from the database.
- *
- * @returns {Promise<Array<{ pageId: string, status: string, title: string }>>}
- */
- async function getEntriesFromNotionDatabase() {
-  const pages = []
-  let cursor = undefined
-
-  while (true) {
-    const { results, next_cursor } = await notion.databases.query({
-      database_id: databaseId,
-      start_cursor: cursor,
-    })
-    pages.push(...results)
-    if (!next_cursor) {
-      break
+class ScriptHelper {
+  constructor(notion, entry) {
+    this.notion = notion;
+    this.latestErrors = []
+    this.entryId = entry.id;
+    this.props = entry.properties;
+    this.enabledStatus = ScriptEnabledStatus.DISABLED;
+    this.scriptStatus = ScriptStatus.NONE;
+    try {
+      var statusName = this.props["Enabled?"].status.name;
+      this.enabledStatus = ScriptEnabledStatus[statusName.toUpperCase()]
+    } catch (error) {
+      console.error(error);
     }
-    cursor = next_cursor
+    this.scriptInstance = null;
+    this.pageId = null;
+    this.pageName = "none";
+    try {
+      this.pageId = this.props["Page ID"].title[0].plain_text
+      this.pageName = this.props["Page Name"].rich_text[0].plain_text
+    } catch (error) {
+      this.latestErrors.push("No page ID found, does this page exist? Did you add it yourself?")
+    }
   }
-  // console.log(`${pages.length} pages successfully fetched.`)
-  return pages
-  .map(page => {
-    const statusProperty = page.properties["Script Processed"];
-    const status = statusProperty ? statusProperty.checkbox : false;
-    const title = page.properties["Name"].title
-      .map(({ plain_text }) => plain_text)
-      .join("");
-      const link = page.properties["Link"]
-      const author = page.properties["Author/Channel"].multi_select
-    // console.log(`Link ${link}`);
-    return {
-      page: page,
-      status,
-      title,
-      author,
-      link,
-    };
-  })
-}
+  
 
-async function getYoutubeMetadata(url){  
-    const requestUrl = `https://youtube.com/oembed?url=${url}&format=json`;
-    try{
-      let data = await axios.get(requestUrl);
-      data = data.data;
-      return{
-        title: data.title,
-        author: [data.author_name],
-        type: "Video"
+  flushErrors() {
+    var ret = this.latestErrors.join("\n")
+    this.latestErrors = [];
+    return ret;
+  }
+
+  createScriptInstance() {
+    var scriptName = this.props.SCRIPT_ID.select.name;
+    console.log(`Creating script Instance ${scriptName} for ${this.pageName} (${this.pageId})`)
+    for (let script of config.AVAILABLE_SCRIPTS) {
+      if (script.name == scriptName) {
+        console.log(eval(script['class'][0]))
+        this.scriptInstance = new (eval(script['class']))(this, this.notion, this.props.Parameters.rich_text[0].plain_text);
+        return this.scriptInstance;
       }
     }
-    catch(error){
-      console.log("Error YouTube metadata");
-      console.error(error);
-    };
-}
+    console.error(`No script found with the name ${scriptName} for ${this.pageName} (${this.pageId})`)
+  }
 
-async function getDOIMetadata(url){
-  try{
-    const citationJSON = await Cite.input(url)[0];
-    return{
-      title: citationJSON.title,
-      author: citationJSON.author.map((x) => x.given + " " +x.family),
-      type: "Paper"
+  startScript() {
+    if(this.scriptInstance == null){
+      this.createScriptInstance()
+    }
+    if(this.scriptInstance != null){
+      this.scriptInstance.start()
     }
   }
-  catch(error){
-    console.log("Error DOI metadata " +url);
-    console.error(error);
-  }
-}
 
-
-async function getURLMetadata(url){
-  try
-  {
-    const data = await urlMetadata(url);
-    return{
-      title:  data['og:title'] !== "" ? data['og:title'] : data.title,
-      author: [data['og:site_name'] !== "" ? data['og:site_name'] : data.author !== "" ? data.author : data.source],
-      type: "Post"
+  stopScript() {
+    if(this.scriptInstance != null){
+      this.scriptInstance.stop()
     }
   }
-  catch(error){
-    console.log("Error getting URL metadata");
-    console.error(error);
-  };
+
+  getProps() {
+    return new PropsHelper()
+    .addStatus("Status", this.scriptStatus.name)
+    .addStatus("Enabled?", this.enabledStatus.name)
+    .addRichText("Errors", this.flushErrors())
+    .build()
+  }
+
+  async updateEntry(){
+    await this.notion.updatePage(this.entryId, this.getProps)
+  }
 }
 
-async function getMetadata(entry) {
-  // console.log(entry);
-  if(!entry.link.url || entry.link.url === ""){
-    entry.link.url = entry.title;
+class ScriptsManager {
+  constructor(notion, scriptsList, masterDatabaseID, refreshTime) {
+    this.notion = new NotionHelper(notion);
+    this.masterDatabaseID = masterDatabaseID;
+    this.masterDatabaseObj = null;
+    this.refreshTime = refreshTime;
+    this.availableScripts = scriptsList;
+    for(let key in this.availableScripts){
+      this.availableScripts[key]['class'] = require(this.availableScripts[key].path)
+    }
+    this.scriptEntries = {}
+    this.attachedDatabases = []
   }
-  let url = entry.link.url;
-  let data = {};
-  let type = "";
-  if(url.toLowerCase().includes("youtu")){
-    data = await getYoutubeMetadata(url);
-    type="Youtube";
-  }
-  else if(url.toLowerCase().includes("doi")){
-    data = await getDOIMetadata(url)
-    type="DOI";
-  }
-  else{
-    data = await getURLMetadata(url)
-    type="URL";
-  }
-  console.log(`Got ${type} metadata from: ${url}`);
-  console.log(data);
-  data.url = url;
-  return data;
-}
 
-async function updateEntry(entry) {
-  // console.log(entry)
-  getMetadata(entry).then((metadata) =>{
-    const authors = metadata.author.map((x) => {return {'name': x}});
-    let updatedPage = {
-      page_id: entry.page.id,
-      properties: {
-        'Name': {
-          title: [
-            {
-              text: {
-                content: metadata.title
-              }
-            }
-          ]
-        },
-        'Author/Channel': {
-          multi_select: authors
-        },
-        'Type': {
-          select:
-          {
-            name: metadata.type
+  async update() {
+    this.updateEntries()
+      .then(() => {
+        return this.updateAttachedDatabases()
+      }).then(() => {
+        return this.updateScriptOptions()
+      }).then(() => {
+        return this.updateScriptsStatus()
+      }).then(() =>{
+        console.log("Completed! Updating running scripts")
+      })
+  }
+
+  async updateScriptsStatus(){
+    for (const [key, value] of Object.entries(this.scriptEntries)) {
+      value.startScript();
+    }
+  }
+
+  async updateScriptOptions() {
+    console.log("**** Updating scripts options! ****")
+    if(!this.masterDatabaseObj){
+      console.error("No master database set! Did you add it to the config.json file? Did you connect the integration with it?")
+      return;
+    }
+    var dbOptions = this.masterDatabaseObj.properties.SCRIPT_ID.select.options;
+    this.availableScripts.map((availableScript) => {
+      var isOptionInDb = dbOptions.find((opt) => opt.name == availableScript.name)
+      if(isOptionInDb === undefined){
+        console.log(`Option ${availableScript.name} not in DB options, adding it now!`)
+        // Add the new option through a new empty entry, and delete it immediately on response
+        var props = new PropsHelper().addSelect("SCRIPT_ID", availableScript.name).build();
+        this.notion.createPage(NotionHelper.ParentType.DATABASE,
+          this.masterDatabaseObj.id, props,
+          (response) => this.notion.deletePage(response.id));
+      }
+    })
+  }
+
+  updateAttachedDatabases() {
+    console.log("**** Updating attached DBs ****")
+    return this.notion.searchDBs((results) => {
+      results.map((attachedDb) => {
+        if(this.isMasterDatabase(attachedDb)){
+          if(this.masterDatabaseObj == null){
+            console.log(`MasterDB Found! ${attachedDb.id}`)
           }
-        },
-        'Link': {
-          url: metadata.url
+          this.masterDatabaseObj = attachedDb;
+          return;
         }
-      } 
-    };
-    console.log(updatedPage)
-    notion.pages.update(updatedPage).then((response) => {
-      updatedPage = {
-        page_id: entry.page.id,
-        properties: {
-          'Script Processed':{
-            checkbox: true
+        // Checking whether the attached database is already listed in one of the entries
+        // Can be confusing: Iterating the row of the master database and looking for the attached DB's Page ID
+        for (const [key, value] of Object.entries(this.scriptEntries)) {
+          if(value.pageId == attachedDb.id){
+            return;
           }
-        } 
-      };
-      response = notion.pages.update(updatedPage).then((response) => {
-        console.log("Page updated!")
-        console.log(response);        
-      }).catch((error) => {
-        console.log("Error updating page AGAIN!")
-        console.log(error)
-      });;
-    }).catch((error) => {
-      console.log("Error updating page!")
-      console.log(error)
-    });
-  }).catch((error) => {
-    console.log("Error getting link metadata!")
-    console.log(error)
-  });
+        }
+        console.log(`Adding new attached DB! ${attachedDb.id}`)
+        var props = new PropsHelper()
+          .addTitle("Page ID", attachedDb.id)
+          .addRichText("Page Name", attachedDb.title[0].plain_text)
+          .addRichText("Page Link", attachedDb.url)
+          .addSelect("SCRIPT_ID", "NONE")
+          .build()
+        this.notion.createPage(NotionHelper.ParentType.DATABASE, this.masterDatabaseObj.id, props)
+      })
+    })    
+  }
+
+  isMasterDatabase(db) {
+    return db.id.replaceAll("-", "") == this.masterDatabaseID;
+  }
+
+  async updateEntries() {
+    console.log("**** Updating scripts instances entries! ****")
+    var dbEntries = await this.notion.getDBEntries(this.masterDatabaseID);
+    dbEntries.map(async (entry) => {
+      if(this.scriptEntries.hasOwnProperty(entry.id)){
+        await entry.updateEntry();
+      } else{
+        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry);
+      }
+    })
+  }
 }
 
-// // addItem("Yurts in Big Sur, California")
-async function getUnprocessedEntries(){
-  return getEntriesFromNotionDatabase().then((pages) => {
-    const unprocessed = pages.filter((p) => (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== "")))
-    // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
-    return unprocessed;
-  }).catch((error) => {
-    console.log("ERROR filtering pages!")
-    console.log(error);
-  })
-}
-
-async function updateUnprocessedEntries(){
-  getUnprocessedEntries()
-  .then((x) => x.map((entry) => updateEntry(entry)))
-  .catch((error) => {
-    console.log("ERROR getting pages!");
-    console.log(error);
-  })
-}
-
-
-updateUnprocessedEntries()
-setInterval(updateUnprocessedEntries, 5000)
-
+const scriptsManager = new ScriptsManager(notion, config.AVAILABLE_SCRIPTS, config.NOTION_SCRIPTS_DATABASE_ID, 10000);
+(async () => {
+  await scriptsManager.update()
+})()
 
