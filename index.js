@@ -29,8 +29,8 @@ class ScriptHelper {
     this.pageId = null;
     this.pageName = "none";
     try {
-      this.pageId = this.props["Page ID"].title[0].plain_text
-      this.pageName = this.props["Page Name"].rich_text[0].plain_text
+      this.pageId = this.props["Page ID"].title[0].plain_text;
+      this.pageName = this.props["Page Name"].rich_text[0].plain_text;
     } catch (error) {
       this.latestErrors.push("No page ID found, does this page exist? Did you add it yourself?")
     }

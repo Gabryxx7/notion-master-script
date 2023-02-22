@@ -146,9 +146,9 @@ class ParamsSchema{
         return null;
     }
     checkParams(params){
-        for(let param of this.paramsData){
+        for (const [paramName, param] of Object.entries(this.paramsData)) {
             if(param.needed){
-                if(!(param.name in params)){
+                if(!(params.hasOwnProperty(param.name))){
                     throw new Error(`${param.name} is required`);
                 }
             }

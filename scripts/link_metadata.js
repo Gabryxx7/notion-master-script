@@ -22,7 +22,7 @@ module.exports = class NotionLinkUpdater {
         } catch(error) {
             console.error(`Error running NotionLinkUpdater on ${this.scriptHelper.pageName} : ${error}`);
         }
-        this.refreshTime = refreshTime;
+        this.refreshTime = params['refreshTime'];
         this.entries = [];
         this.entriesUpdater = null;
         //     setInterval((databaseId) => getEntriesFromNotionDatabase(databaseId), 50000)
