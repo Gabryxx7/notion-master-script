@@ -9,19 +9,14 @@ const { Utils, MetadataHelper, ParamsSchema, ScriptStatus, ScriptEnabledStatus }
 // const databaseId = config.NOTION_DATABASE_ID
 
 module.exports = class NotionLinkUpdater {
-    paramsSchema = new ParamsSchema()
-        .addParam("databaseID", true)
+    static paramsSchema = new ParamsSchema()
+        .addParam("databaseId", true)
         .addParam("refreshTime", false, 5000);
     // Name: Needed?
     constructor(scriptHelper, notion, params) {
         this.scriptHelper = scriptHelper;
         this.notion = notion;
         this.params = params;
-        try{
-            this.paramsSchema.checkParams(params);
-        } catch(error) {
-            console.error(`Error running NotionLinkUpdater on ${this.scriptHelper.pageName} : ${error}`);
-        }
         this.refreshTime = params['refreshTime'];
         this.entries = [];
         this.entriesUpdater = null;
@@ -31,18 +26,19 @@ module.exports = class NotionLinkUpdater {
     }
 
     start() {
-        this.updateEntries(true)
+        this.update(true)
     }
+
     stop() {
-        if (this.entriesUpdater != null)
+        if (this.entriesUpdater != null){
             clearTimeout(this.entriesUpdater)
-        this.scriptHelper.updateStatus(ScriptStatus.NOT_STARTED);
+        }
     }
     
 
-    updateEntries(loop = false) {
+    update(loop = false) {
         this.scriptHelper.updateStatus(ScriptStatus.RUNNING);
-        this.entries = Utils.getDatabaseEntries(this.notion, this.databaseID)
+        this.entries = this.notion.getDBEntries(this.databaseId)
             .then((pages) => pages.map(page => processPage(page)));
 
         this.entries
@@ -51,6 +47,7 @@ module.exports = class NotionLinkUpdater {
                     return pages.filter((p) => (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== "")))
                     // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
                 } catch (error) {
+                    this.scriptHelper.throwError("ERROR filtering pages!", error)
                     console.log("ERROR filtering pages!", error)
                     return false;
                 }
@@ -58,10 +55,10 @@ module.exports = class NotionLinkUpdater {
             .map((entry) => updateEntry(entry))
 
         if (loop) {
-            this.entriesUpdater = setTimeout(() => updateEntries(true), this.refreshTime)
+            this.entriesUpdater = setTimeout(() => update(true), this.refreshTime)
         }
         else{
-            this.scriptHelper.updateStatus(ScriptStatus.NOT_STARTED);
+            this.scriptHelper.updateStatus(ScriptStatus.STOPPED);
         }
     }
 

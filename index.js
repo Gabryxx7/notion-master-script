@@ -2,6 +2,7 @@
 const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
 const config = require('./config.no-commit.json')
+const NotionLinkUpdater = require("./scripts/link_metadata")
 const { Utils, ScriptStatus, ScriptEnabledStatus, PropsHelper, NotionHelper } = require("./utils.js")
 
 dotenv.config()
@@ -12,62 +13,115 @@ const notion = new Client({ auth: config.NOTION_KEY })
 
 
 class ScriptHelper {
-  constructor(notion, entry) {
+  constructor(notion, entry, entryIndex) {
     this.notion = notion;
-    this.latestErrors = []
-    this.entryId = entry.id;
-    this.props = entry.properties;
-    this.enabledStatus = ScriptEnabledStatus.DISABLED;
+    this.errorsList = []
+    this.entryIndex = entryIndex
+    this.entry = entry;
+    this.props = this.entry.properties;
     this.scriptStatus = ScriptStatus.NONE;
-    try {
-      var statusName = this.props["Enabled?"].status.name;
-      this.enabledStatus = ScriptEnabledStatus[statusName.toUpperCase()]
-    } catch (error) {
-      console.error(error);
-    }
+    this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
     this.scriptInstance = null;
-    this.pageId = null;
+    this.databaseId = null;
     this.pageName = "none";
     try {
-      this.pageId = this.props["Page ID"].title[0].plain_text;
+      this.databaseId = this.props["Page ID"].title[0].plain_text;
       this.pageName = this.props["Page Name"].rich_text[0].plain_text;
     } catch (error) {
-      this.latestErrors.push("No page ID found, does this page exist? Did you add it yourself?")
+      this.throwError(`Entry ${this.entryIndex} No page/database ID found, does this page/db exist? Was it added manually?`)
     }
+  }
+
+  parseEnabledStatus(statusProp){
+    try {
+      var statusName = statusProp.status.name;
+      return ScriptEnabledStatus[statusName.toUpperCase()]
+    } catch (error) {
+      error.m
+      this.throwError("Error checking Enabled status, script automatically Disabled", error)
+    }
+    return ScriptEnabledStatus.DISABLED;
+  }
+
+
+  throwError(msg, errorObj=null){
+    if(errorObj != null){
+      msg =`${msg}: ${errorObj.message}`
+    }
+    this.errorsList.push({msg: msg, errorObj: errorObj});
+    console.error(msg, errorObj)
+    console.log()
   }
   
 
   flushErrors() {
-    var ret = this.latestErrors.join("\n")
-    this.latestErrors = [];
+    var ret = this.errorsList.map((x) => x.msg).join("\n> ")
+    ret = `> ${ret}`;
+    console.log(`\n**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
+    this.errorsList = [];
     return ret;
   }
 
-  createScriptInstance() {
+  getParamsJson(){
+    var jsonParams = {}
+    try{
+      var paramsStr = this.props.Parameters.rich_text[0].plain_text;
+      console.log("\n\n", paramsStr, "\n\n")
+      try{
+        jsonParams = JSON.parse(paramsStr);
+      } catch(error){
+        this.throwError("Error parsing script parameters", error)
+      }
+    } catch(error){
+      // this.throwError("No parameters passed", error)
+    }
+    if(!jsonParams.hasOwnProperty("databaseId")){
+      jsonParams['databaseId'] = this.databaseId.replaceAll("-", "");
+    }
+    return jsonParams;
+  }
+
+  async createScriptInstance() {
     var scriptName = this.props.SCRIPT_ID.select.name;
-    console.log(`Creating script Instance ${scriptName} for ${this.pageName} (${this.pageId})`)
+    console.log(`Creating script Instance ${scriptName} for ${this.pageName} (${this.databaseId})`)
     for (let script of config.AVAILABLE_SCRIPTS) {
       if (script.name == scriptName) {
-        console.log(eval(script['class'][0]))
-        this.scriptInstance = new (eval(script['class']))(this, this.notion, this.props.Parameters.rich_text[0].plain_text);
+        var className = script.className;
+        try{
+          console.log(`** Instantiating ${className} **`)
+          var params = this.getParamsJson();
+          var paramsOk = (eval(className)).paramsSchema.checkParams(params);
+          this.scriptInstance = new (eval(className))(this, this.notion, params);
+        } catch(error) {
+          this.throwError(`Error instantiating ${className} on ${this.pageName}`, error);
+        }
         return this.scriptInstance;
       }
     }
-    console.error(`No script found with the name ${scriptName} for ${this.pageName} (${this.pageId})`)
+    this.throwError(`No script found with the name ${scriptName} for ${this.pageName} (${this.databaseId})`);
   }
 
   startScript() {
     if(this.scriptInstance == null){
       this.createScriptInstance()
+      .then(() => this.updateStatus(ScriptStatus.NOT_STARTED))
+      .then(() => {
+        if(this.scriptInstance == null){
+          throw Error("Script not instantiated");
+        }
+        this.scriptInstance.start()
+      })
+      .then(() => this.updateStatus(ScriptStatus.STARTED))
+      return;
     }
-    if(this.scriptInstance != null){
-      this.scriptInstance.start()
-    }
+    this.scriptInstance.start()
+    .then(() => this.updateStatus(ScriptStatus.STARTED));
   }
 
-  stopScript() {
+  async stopScript() {
     if(this.scriptInstance != null){
       this.scriptInstance.stop()
+      await this.updateStatus(ScriptStatus.STOPPED);
     }
   }
 
@@ -79,8 +133,21 @@ class ScriptHelper {
     .build()
   }
 
-  async updateEntry(){
-    await this.notion.updatePage(this.entryId, this.getProps)
+  async updateStatus(newStatus){
+    this.scriptStatus = newStatus;
+    await this.updateEntry();
+  }
+
+  async updateEntry(newEntry=null){
+    if(newEntry != null){
+      this.entry = entry;
+      this.props = this.entry.props;
+      this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
+    }
+    if(this.enabledStatus.id == ScriptEnabledStatus.DISABLED.id){
+      await this.stopScript();
+    }
+    await this.notion.updatePage(this.entry.id, this.getProps())
   }
 }
 
@@ -118,7 +185,7 @@ class ScriptsManager {
   }
 
   async updateScriptOptions() {
-    console.log("**** Updating scripts options! ****")
+    console.log("\n**** Updating scripts options! ****")
     if(!this.masterDatabaseObj){
       console.error("No master database set! Did you add it to the config.json file? Did you connect the integration with it?")
       return;
@@ -138,7 +205,7 @@ class ScriptsManager {
   }
 
   updateAttachedDatabases() {
-    console.log("**** Updating attached DBs ****")
+    console.log("\n**** Updating attached DBs ****")
     return this.notion.searchDBs((results) => {
       results.map((attachedDb) => {
         if(this.isMasterDatabase(attachedDb)){
@@ -151,7 +218,7 @@ class ScriptsManager {
         // Checking whether the attached database is already listed in one of the entries
         // Can be confusing: Iterating the row of the master database and looking for the attached DB's Page ID
         for (const [key, value] of Object.entries(this.scriptEntries)) {
-          if(value.pageId == attachedDb.id){
+          if(value.databaseId == attachedDb.id){
             return;
           }
         }
@@ -172,13 +239,13 @@ class ScriptsManager {
   }
 
   async updateEntries() {
-    console.log("**** Updating scripts instances entries! ****")
+    console.log("\n**** Updating scripts instances entries! ****")
     var dbEntries = await this.notion.getDBEntries(this.masterDatabaseID);
-    dbEntries.map(async (entry) => {
+    dbEntries.map(async (entry, index) => {
       if(this.scriptEntries.hasOwnProperty(entry.id)){
-        await entry.updateEntry();
+        await entry.updateEntry(entry);
       } else{
-        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry);
+        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index);
       }
     })
   }

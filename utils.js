@@ -2,9 +2,11 @@
 const ScriptStatus = {
     NONE: { "name": "None", "id": -1 },
     SCRIPT_NOT_FOUND: { "name": "Script Not Found", "id": 0 },
-    NOT_STARTED: { "name": "Not Started", "id": 1 },
-    RUNNING: { "name": "Running", "id": 2 },
-    ERROR: { "name": "Error", "id": 3 }
+    STARTED: { "name": "Not Started", "id": 1 },
+    STOPPED: { "name": "Not Started", "id": 2 },
+    NOT_STARTED: { "name": "Not Started", "id": 3 },
+    RUNNING: { "name": "Running", "id": 4 },
+    ERROR: { "name": "Error", "id": 5 }
   }
   
   const ScriptEnabledStatus = {
@@ -68,65 +70,61 @@ class NotionHelper{
         return pages
     }
 
-    updatePage(pId, props, respHandler=null, errorHandler=null){
-        this.notion.pages.update({
-            page_id: pId,
-            properties: props
-        }).then((response) => {
+    async updatePage(pId, props, respHandler=null, errorHandler=null){
+        try{
+            var response = await this.notion.pages.update({
+                page_id: pId,
+                properties: props
+            });
             // console.log("Response:", response)
             if(respHandler != null) respHandler(response)
-        }).catch((error) => {
+        } catch(error) {
             console.log(`Error updating page with ID ${pId}`, error) 
             if(errorHandler != null) errorHandler(error)
-        });
+        }
     }
 
-    createPage(pType, pId, props, respHandler=null, errorHandler=null){
-        var parentData = {type: pType.field_name}
-        parentData[pType.field_name] = pId;
-        this.notion.pages.create({ // Add the new option through a new empty entry
-            parent: parentData,
-            properties: props
-        }).then((response) => {
+    async createPage(pType, pId, props, respHandler=null, errorHandler=null){
+        try{
+            var parentData = {type: pType.field_name}
+            parentData[pType.field_name] = pId;
+            var response = await this.notion.pages.create({ // Add the new option through a new empty entry
+                parent: parentData,
+                properties: props
+            })
             // console.log("Response:", response)
             if(respHandler != null) respHandler(response)
-        }).catch((error) => {
-            // console.log(`Error creating page with parent ID ${pId}`, error) 
+        } catch(error) {
+            console.error(`Error creating page with parent ID ${pId}`, error) 
             if(errorHandler != null) errorHandler(error)
-        });
+        }
     }
 
-    deletePage(pId, respHandler=null, errorHandler=null){
-        this.notion.pages.update({
-            page_id: pId,
-            archived: true
-        }).then((response) => {
-            // console.log("Response:", response)
-            if(respHandler != null) respHandler(response)
-        }).catch((error) => {
-            console.log(`Error deleting page with ID ${pId}`, error) 
-            if(errorHandler != null) errorHandler(error)
-        });
-    }
-
-    searchDBs(respHandler=null, errorHandler=null){
-        return new Promise((resolve, reject) => {
-            this.notion.search({
-                filter: { value: 'database', property: 'object'}
-            }).then((response) => {
-                // console.log("Response:", response)
-                if(respHandler != null){
-                    respHandler(response.results)
-                }
-                resolve();
-            }).catch((error) => {
-                console.log("Error listing databases!", error) 
-                if(errorHandler != null){
-                    errorHandler(error)
-                }
-                reject()
+    async deletePage(pId, respHandler=null, errorHandler=null){
+        try{
+            var response = await this.notion.pages.update({
+                page_id: pId,
+                archived: true
             });
-        });
+            // console.log("Response:", response)
+            if(respHandler != null) respHandler(response)
+        } catch(error) {
+            console.error(`Error deleting page with ID ${pId}`, error) 
+            if(errorHandler != null) errorHandler(error)
+        }
+    }
+
+    async searchDBs(respHandler=null, errorHandler=null){
+        try{
+            var response = this.notion.search({
+                filter: { value: 'database', property: 'object'}
+            })
+            // console.log("Response:", response)
+            if(respHandler != null) respHandler(response)
+        } catch(error){
+            console.log("Error listing databases!", error) 
+            if(errorHandler != null) errorHandler(error)
+        }
     }
 }
 
