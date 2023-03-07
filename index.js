@@ -49,7 +49,8 @@ class ScriptHelper {
       msg =`${msg}: ${errorObj.message}`
     }
     this.errorsList.push({msg: msg, errorObj: errorObj});
-    console.error(msg, errorObj)
+    console.error(msg)
+    // console.error(msg, errorObj)
     console.log()
   }
   
@@ -57,7 +58,7 @@ class ScriptHelper {
   flushErrors() {
     var ret = this.errorsList.map((x) => x.msg).join("\n> ")
     ret = `> ${ret}`;
-    console.log(`\n**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
+    // console.log(`\n**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
     this.errorsList = [];
     return ret;
   }
@@ -65,17 +66,20 @@ class ScriptHelper {
   getParamsJson(){
     var jsonParams = {}
     try{
-      var paramsStr = this.props.Parameters.rich_text[0].plain_text;
-      console.log("\n\n", paramsStr, "\n\n")
+      var paramsStr = `${this.props.Parameters.rich_text[0].plain_text.toString('utf8')}`;
+      // console.log("\n", paramsStr, "\n")
+      paramsStr = paramsStr.replaceAll(/“|”/g, '"');
+      // console.log("\n", paramsStr, "\n")
       try{
-        jsonParams = JSON.parse(paramsStr);
+        jsonParams = JSON.parse(paramsStr, 'utf8');
+        console.log(jsonParams)
       } catch(error){
         this.throwError("Error parsing script parameters", error)
       }
     } catch(error){
       // this.throwError("No parameters passed", error)
     }
-    if(!jsonParams.hasOwnProperty("databaseId")){
+    if(!jsonParams.hasOwnProperty("databaseId") && this.databaseId != null){
       jsonParams['databaseId'] = this.databaseId.replaceAll("-", "");
     }
     return jsonParams;
@@ -104,18 +108,19 @@ class ScriptHelper {
   startScript() {
     if(this.scriptInstance == null){
       this.createScriptInstance()
-      .then(() => this.updateStatus(ScriptStatus.NOT_STARTED))
-      .then(() => {
+      .then(async () => await this.updateStatus(ScriptStatus.NOT_STARTED))
+      .then(async () => {
         if(this.scriptInstance == null){
-          throw Error("Script not instantiated");
+          // this.throwError("Script not instantiated")
+          return;
         }
         this.scriptInstance.start()
       })
-      .then(() => this.updateStatus(ScriptStatus.STARTED))
+      .then(async () => await this.updateStatus(ScriptStatus.STARTED))
       return;
     }
     this.scriptInstance.start()
-    .then(() => this.updateStatus(ScriptStatus.STARTED));
+    .then(async () => await this.updateStatus(ScriptStatus.STARTED));
   }
 
   async stopScript() {
@@ -140,7 +145,7 @@ class ScriptHelper {
 
   async updateEntry(newEntry=null){
     if(newEntry != null){
-      this.entry = entry;
+      this.entry = newEntry;
       this.props = this.entry.props;
       this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
     }
@@ -197,17 +202,21 @@ class ScriptsManager {
         console.log(`Option ${availableScript.name} not in DB options, adding it now!`)
         // Add the new option through a new empty entry, and delete it immediately on response
         var props = new PropsHelper().addSelect("SCRIPT_ID", availableScript.name).build();
-        this.notion.createPage(NotionHelper.ParentType.DATABASE,
-          this.masterDatabaseObj.id, props,
-          (response) => this.notion.deletePage(response.id));
+        this.notion.createPage(
+          NotionHelper.ParentType.DATABASE,
+          this.masterDatabaseObj.id,
+          props)
+        .then((response) => this.notion.deletePage(response.id))
+        .catch((error) => console.error("Error creating empty page for script options", error))
       }
     })
   }
 
-  updateAttachedDatabases() {
+  async updateAttachedDatabases() {
     console.log("\n**** Updating attached DBs ****")
-    return this.notion.searchDBs((results) => {
-      results.map((attachedDb) => {
+    try{
+      var response =  await this.notion.searchDBs();
+      response.results.map((attachedDb) => {
         if(this.isMasterDatabase(attachedDb)){
           if(this.masterDatabaseObj == null){
             console.log(`MasterDB Found! ${attachedDb.id}`)
@@ -230,8 +239,12 @@ class ScriptsManager {
           .addSelect("SCRIPT_ID", "NONE")
           .build()
         this.notion.createPage(NotionHelper.ParentType.DATABASE, this.masterDatabaseObj.id, props)
-      })
-    })    
+          .then((response) => this.notion.deletePage(response.id))
+          .catch((error) => console.error("Error creating page for new Attached DB", error))
+      })  
+    }catch(error){
+      console.error("Error retreiving attached DBs", error)
+    }
   }
 
   isMasterDatabase(db) {

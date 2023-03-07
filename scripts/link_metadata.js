@@ -1,22 +1,31 @@
 #!/usr/bin/env node
 const { Client } = require("@notionhq/client")
 // const config = require('./config.no-commit.json')
-const axios = require('axios');
-const Cite = require('citation-js')
 const urlMetadata = require('url-metadata')
-const { Utils, MetadataHelper, ParamsSchema, ScriptStatus, ScriptEnabledStatus } = require('../utils.js')
+const { Utils, MetadataHelper, PropsHelper, ParamsSchema, ScriptStatus, ScriptEnabledStatus } = require('../utils.js')
 
 // const databaseId = config.NOTION_DATABASE_ID
 
 module.exports = class NotionLinkUpdater {
     static paramsSchema = new ParamsSchema()
         .addParam("databaseId", true)
+        .addParam("columns", false,
+        {
+            status: 'Script Processed',
+            title: 'Name',
+            author: 'Author/Channel',
+            link: 'Link',
+            type: 'Type'
+        })
         .addParam("refreshTime", false, 5000);
     // Name: Needed?
     constructor(scriptHelper, notion, params) {
         this.scriptHelper = scriptHelper;
+        this.metadataHelper = new MetadataHelper();
         this.notion = notion;
         this.params = params;
+        this.databaseId = this.params.databaseId;
+        this.columnsSchema = this.params.columns;
         this.refreshTime = params['refreshTime'];
         this.entries = [];
         this.entriesUpdater = null;
@@ -39,98 +48,75 @@ module.exports = class NotionLinkUpdater {
     update(loop = false) {
         this.scriptHelper.updateStatus(ScriptStatus.RUNNING);
         this.entries = this.notion.getDBEntries(this.databaseId)
-            .then((pages) => pages.map(page => processPage(page)));
-
-        this.entries
-            .filter((pages) => {
-                try {
-                    return pages.filter((p) => (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== "")))
-                    // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
-                } catch (error) {
-                    this.scriptHelper.throwError("ERROR filtering pages!", error)
-                    console.log("ERROR filtering pages!", error)
-                    return false;
+            .then((pages) => {
+                this.entries =
+                    pages
+                        .map((page) => this.processPage(page))
+                        .filter((p) => {
+                            console.log(p.status, p.link, p.title)
+                            try {
+                                return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
+                                // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
+                            } catch (error) {
+                                this.scriptHelper.throwError("ERROR filtering pages!", error)
+                                console.log("ERROR filtering pages!", error)
+                                return false;
+                            }
+                        })
+                        .map((entry) => this.updateEntry(entry))
+                if (loop) {
+                    this.entriesUpdater = setTimeout(() => this.update(true), this.refreshTime)
                 }
-            })
-            .map((entry) => updateEntry(entry))
-
-        if (loop) {
-            this.entriesUpdater = setTimeout(() => update(true), this.refreshTime)
-        }
-        else{
-            this.scriptHelper.updateStatus(ScriptStatus.STOPPED);
-        }
+                else{
+                    this.scriptHelper.updateStatus(ScriptStatus.STOPPED);
+                }
+            });
     }
 
     processPage(page) {
-        const statusProperty = page.properties["Script Processed"];
+        const statusProperty = this.columnsSchema.status in page.properties ? page.properties[this.columnsSchema.status] : null;
         const status = statusProperty ? statusProperty.checkbox : false;
-        const title = page.properties["Name"].title
-            .map(({ plain_text }) => plain_text)
-            .join("");
-        const link = page.properties["Link"]
-        const author = page.properties["Author/Channel"].multi_select
+        const title = this.columnsSchema.title in page.properties ?
+            page.properties[this.columnsSchema.title].title.map(({ plain_text }) => plain_text).join("") : null;
+        const link =  this.columnsSchema.link in page.properties ? page.properties[this.columnsSchema.link] : null;
+        const author =  this.columnsSchema.author in page.properties ? page.properties[this.columnsSchema.author].multi_select : null;
         // console.log(`Link ${link}`);
-        return {
+        const newPage = {
             page: page,
             status,
             title,
             author,
             link,
         };
+        console.log(newPage)
+        return newPage
     }
 
-    async updateEntry(entry) {
+    updateEntry(entry) {
         // console.log(entry)
-        MetadataHelper.getLinkMetadata(entry).then((metadata) => {
+        this.metadataHelper.getLinkMetadata(entry).then((metadata) => {
             const authors = metadata.author.map((x) => { return { 'name': x } });
-            let updatedPage = {
-                page_id: entry.page.id,
-                properties: {
-                    'Name': {
-                        title: [
-                            {
-                                text: {
-                                    content: metadata.title
-                                }
-                            }
-                        ]
-                    },
-                    'Author/Channel': {
-                        multi_select: authors
-                    },
-                    'Type': {
-                        select:
-                        {
-                            name: metadata.type
-                        }
-                    },
-                    'Link': {
-                        url: metadata.url
-                    }
-                }
-            };
-            console.log(updatedPage)
-            notion.pages
-                .update(updatedPage)
+            var props = new PropsHelper()
+                .addTitle(this.columnsSchema.title, metadata.title)
+                .addMultiSelect(this.columnsSchema.author, authors)
+                .addSelect(this.columnsSchema.type, metadata.type)
+                .addLink(this.columnsSchema.link, metadata.url)
+                .build()
+                console.log("Updating entry with props: ", props, this.columnsSchema)
+            this.notion.updatePage(
+                entry.page.id,
+                props)
                 .then((response) => {
-                    updatedPage = {
-                        page_id: entry.page.id,
-                        properties: {
-                            'Script Processed': {
-                                checkbox: true
-                            }
-                        }
-                    };
-                    response = notion.pages.update(updatedPage)
-                        .then((response) => {console.log("Page updated!", response)})
-                        .catch((error) => { console.log("Error updating page AGAIN!", error) });
-                }).catch((error) => { console.log("Error updating page!", error) });
-        }).catch((error) => { console.log("Error getting link metadata!", error) });
+                    var props = new PropsHelper()
+                        .addCheckbox(this.columnsSchema.status, true)
+                        .build()
+                    this.notion.updatePage( entry.page.id, props)
+                        .catch((error) => { console.log("Error updating page AGAIN!", error.message) })
+                })
+                .catch((error) => { console.log("Error updating page!", error.message) })
+        });
     }
 }
-
-
 
 // config.NOTION_DATABASE_IDs.forEach((databaseId) =>
 //   {
@@ -142,6 +128,3 @@ module.exports = class NotionLinkUpdater {
 //     updateUnprocessedEntries(databaseId)
 //     setInterval((databaseId) => updateUnprocessedEntries(databaseId), 3000)
 //   });
-
-
-

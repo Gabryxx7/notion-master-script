@@ -1,4 +1,7 @@
 
+const axios = require('axios');
+const Cite = require('citation-js')
+
 const ScriptStatus = {
     NONE: { "name": "None", "id": -1 },
     SCRIPT_NOT_FOUND: { "name": "Script Not Found", "id": 0 },
@@ -23,6 +26,10 @@ class PropsHelper{
         this.props[propName] = { status: { name: statusName}};
         return this;
     }
+    addCheckbox(propName, ticked){
+        this.props[propName] = { checkbox: ticked };
+        return this;
+    }
     addRichText(propName, textContent){
         this.props[propName] = { rich_text: [{text: { content: textContent}}]};
         return this;
@@ -37,6 +44,10 @@ class PropsHelper{
     }
     addSelect(propName, selectedName) {
         this.props[propName] = { select: { name: selectedName}}
+        return this;
+    }
+    addLink(propName, url) {
+        this.props[propName] = {url: url}
         return this;
     }
     build(){
@@ -70,61 +81,33 @@ class NotionHelper{
         return pages
     }
 
-    async updatePage(pId, props, respHandler=null, errorHandler=null){
-        try{
-            var response = await this.notion.pages.update({
-                page_id: pId,
-                properties: props
-            });
-            // console.log("Response:", response)
-            if(respHandler != null) respHandler(response)
-        } catch(error) {
-            console.log(`Error updating page with ID ${pId}`, error) 
-            if(errorHandler != null) errorHandler(error)
-        }
+    updatePage(pId, props, respHandler=null, errorHandler=null){
+        return this.notion.pages.update({
+            page_id: pId,
+            properties: props
+        });
     }
 
-    async createPage(pType, pId, props, respHandler=null, errorHandler=null){
-        try{
-            var parentData = {type: pType.field_name}
-            parentData[pType.field_name] = pId;
-            var response = await this.notion.pages.create({ // Add the new option through a new empty entry
+    createPage(pType, pId, props){
+        var parentData = {type: pType.field_name}
+        parentData[pType.field_name] = pId;
+        return this.notion.pages.create({
                 parent: parentData,
                 properties: props
             })
-            // console.log("Response:", response)
-            if(respHandler != null) respHandler(response)
-        } catch(error) {
-            console.error(`Error creating page with parent ID ${pId}`, error) 
-            if(errorHandler != null) errorHandler(error)
-        }
     }
 
-    async deletePage(pId, respHandler=null, errorHandler=null){
-        try{
-            var response = await this.notion.pages.update({
-                page_id: pId,
-                archived: true
-            });
-            // console.log("Response:", response)
-            if(respHandler != null) respHandler(response)
-        } catch(error) {
-            console.error(`Error deleting page with ID ${pId}`, error) 
-            if(errorHandler != null) errorHandler(error)
-        }
+    deletePage(pId, respHandler=null, errorHandler=null){
+        return this.notion.pages.update({
+            page_id: pId,
+            archived: true
+        });
     }
 
-    async searchDBs(respHandler=null, errorHandler=null){
-        try{
-            var response = this.notion.search({
-                filter: { value: 'database', property: 'object'}
-            })
-            // console.log("Response:", response)
-            if(respHandler != null) respHandler(response)
-        } catch(error){
-            console.log("Error listing databases!", error) 
-            if(errorHandler != null) errorHandler(error)
-        }
+    searchDBs(respHandler=null, errorHandler=null){
+        return this.notion.search({
+            filter: { value: 'database', property: 'object'}
+        })
     }
 }
 
@@ -144,11 +127,25 @@ class ParamsSchema{
         return null;
     }
     checkParams(params){
-        for (const [paramName, param] of Object.entries(this.paramsData)) {
-            if(param.needed){
-                if(!(params.hasOwnProperty(param.name))){
-                    throw new Error(`${param.name} is required`);
+        for (const [paramName, sParam] of Object.entries(this.paramsData)) {
+            if(!params.hasOwnProperty(sParam.name)){
+                if(sParam.needed){
+                    throw new Error(`${sParam.name} is required`);
                 }
+                params[sParam.name] = sParam.defaultVal;
+            }
+            else{
+                console.log(`Params: ${JSON.stringify(params[sParam.name])}, ${JSON.stringify(sParam.defaultVal)}`)
+                if (params[sParam.name].constructor == Object){
+                    for (const [defaultParamName, defaultParam] of Object.entries(sParam.defaultVal)){
+                        if(!params[sParam.name].hasOwnProperty(defaultParamName)){
+                            console.log(`Adding default param: ${defaultParamName}`)
+                            params[sParam.name][defaultParamName] = defaultParam;
+                        }
+                    }
+                }
+                console.log("FInal column schema: ", params[sParam.name])
+
             }
         }
         return true;
@@ -170,15 +167,15 @@ class MetadataHelper {
         let data = {};
         let type = "";
         if (url.toLowerCase().includes("youtu")) {
-            data = await getYoutubeMetadata(url);
+            data = await this.getYoutubeMetadata(url);
             type = "Youtube";
         }
         else if (url.toLowerCase().includes("doi")) {
-            data = await getDOIMetadata(url)
+            data = await this.getDOIMetadata(url)
             type = "DOI";
         }
         else {
-            data = await getURLMetadata(url)
+            data = await this.getURLMetadata(url)
             type = "URL";
         }
         console.log(`Got ${type} metadata from: ${url}`);
