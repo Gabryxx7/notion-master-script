@@ -53,7 +53,7 @@ module.exports = class NotionLinkUpdater {
                     pages
                         .map((page) => this.processPage(page))
                         .filter((p) => {
-                            console.log(p.status, p.link, p.title)
+                            // console.log(p.status, p.link, p.title)
                             try {
                                 return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
                                 // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
@@ -88,7 +88,6 @@ module.exports = class NotionLinkUpdater {
             author,
             link,
         };
-        console.log(newPage)
         return newPage
     }
 
@@ -102,7 +101,7 @@ module.exports = class NotionLinkUpdater {
                 .addSelect(this.columnsSchema.type, metadata.type)
                 .addLink(this.columnsSchema.link, metadata.url)
                 .build()
-                console.log("Updating entry with props: ", props, this.columnsSchema)
+                console.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
             this.notion.updatePage(
                 entry.page.id,
                 props)

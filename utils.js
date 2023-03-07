@@ -135,7 +135,6 @@ class ParamsSchema{
                 params[sParam.name] = sParam.defaultVal;
             }
             else{
-                console.log(`Params: ${JSON.stringify(params[sParam.name])}, ${JSON.stringify(sParam.defaultVal)}`)
                 if (params[sParam.name].constructor == Object){
                     for (const [defaultParamName, defaultParam] of Object.entries(sParam.defaultVal)){
                         if(!params[sParam.name].hasOwnProperty(defaultParamName)){
