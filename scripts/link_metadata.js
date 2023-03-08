@@ -2,7 +2,8 @@
 const { Client } = require("@notionhq/client")
 // const config = require('./config.no-commit.json')
 const urlMetadata = require('url-metadata')
-const { Utils, MetadataHelper, PropsHelper, ParamsSchema, ScriptStatus, ScriptEnabledStatus } = require('../utils.js')
+const { Utils, MetadataHelper, PropsHelper, ParamsSchema, NotionHelper } = require('../utils.js')
+const { ScriptStatus, ScriptEnabledStatus } = require('../ScriptStatus.js')
 
 // const databaseId = config.NOTION_DATABASE_ID
 
@@ -15,7 +16,9 @@ module.exports = class NotionLinkUpdater {
             title: 'Name',
             author: 'Author/Channel',
             link: 'Link',
-            type: 'Type'
+            type: 'Type',
+            citation: 'Citation',
+            pdfLink: 'PDF Link'
         })
         .addParam("refreshTime", false, 5000);
     // Name: Needed?
@@ -48,22 +51,21 @@ module.exports = class NotionLinkUpdater {
     update(loop = false) {
         this.scriptHelper.updateStatus(ScriptStatus.RUNNING);
         this.entries = this.notion.getDBEntries(this.databaseId)
-            .then((pages) => {
-                this.entries =
-                    pages
-                        .map((page) => this.processPage(page))
+            .then(async (pages) => {
+                this.entries = pages.map((page) => this.processPage(page))
                         .filter((p) => {
-                            // console.log(p.status, p.link, p.title)
-                            try {
-                                return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
-                                // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
-                            } catch (error) {
-                                this.scriptHelper.throwError("ERROR filtering pages!", error)
-                                console.log("ERROR filtering pages!", error)
-                                return false;
-                            }
+                            return !p.status;
+                            // try {
+                            //     return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
+                            //     // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
+                            // } catch (error) {
+                            //     this.scriptHelper.throwError("ERROR filtering pages!", error)
+                            //     console.log("ERROR filtering pages!", error)
+                            //     return false;
+                            // }
                         })
-                        .map((entry) => this.updateEntry(entry))
+                        .map(async (entry) => await this.updateEntry(entry))
+                await this.scriptHelper.updateEntryPage();
                 if (loop) {
                     this.entriesUpdater = setTimeout(() => this.update(true), this.refreshTime)
                 }
@@ -91,29 +93,47 @@ module.exports = class NotionLinkUpdater {
         return newPage
     }
 
-    updateEntry(entry) {
-        // console.log(entry)
-        this.metadataHelper.getLinkMetadata(entry).then((metadata) => {
-            const authors = metadata.author.map((x) => { return { 'name': x } });
-            var props = new PropsHelper()
-                .addTitle(this.columnsSchema.title, metadata.title)
-                .addMultiSelect(this.columnsSchema.author, authors)
-                .addSelect(this.columnsSchema.type, metadata.type)
-                .addLink(this.columnsSchema.link, metadata.url)
-                .build()
-                console.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
-            this.notion.updatePage(
-                entry.page.id,
+    createUpdatePage(entry, metadata, createNew=false){
+        if(!metadata) return;
+        const authors = metadata.author.map((x) => { return { 'name': x } });
+        var props = new PropsHelper(entry.page.properties)
+            .addTitle(this.columnsSchema.title, metadata.title)
+            .addMultiSelect(this.columnsSchema.author, authors)
+            .addSelect(this.columnsSchema.type, metadata.type)
+            .addLink(this.columnsSchema.link, metadata.url)
+            .addLink(this.columnsSchema.pdfLink, metadata.pdfLink)
+            .addRichText(this.columnsSchema.citation, metadata.citation)
+            .addCheckbox(this.columnsSchema.status, true)
+            .build()
+            // console.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
+        if(createNew){
+            this.notion.createPage(
+                NotionHelper.ParentType.DATABASE,
+                this.databaseId,
                 props)
-                .then((response) => {
-                    var props = new PropsHelper()
-                        .addCheckbox(this.columnsSchema.status, true)
-                        .build()
-                    this.notion.updatePage( entry.page.id, props)
-                        .catch((error) => { console.log("Error updating page AGAIN!", error.message) })
-                })
+            .catch((error) => { console.log("Error creating page!", error.message) })
+        }
+        else{
+            this.notion.updatePage(entry.page.id,props)
                 .catch((error) => { console.log("Error updating page!", error.message) })
-        });
+        }
+    }
+
+    async updateEntry(entry) {
+        const blocks = await this.notion.retrievePageBlocks(entry.page.id)
+        var urls = blocks;
+        if (entry.link.url && entry.link.url !== "") {
+            urls = urls.concat(entry.link.url.split(/\n|,/))
+        }
+        urls = urls.concat(entry.title.split(/\n|,/))
+        urls = urls.filter((x) => x != '');
+        console.log(urls)
+        if(urls.length <= 0) return;
+
+        for (let [index, url] of urls.entries(urls)) {
+            const metadata = await this.metadataHelper.getLinkMetadata(url);
+            this.createUpdatePage(entry, metadata, index > 0);
+          }
     }
 }
 

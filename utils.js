@@ -1,52 +1,69 @@
 
 const axios = require('axios');
 const Cite = require('citation-js')
+const sleep = require("timers/promises").setTimeout;
 
-const ScriptStatus = {
-    NONE: { "name": "None", "id": -1 },
-    SCRIPT_NOT_FOUND: { "name": "Script Not Found", "id": 0 },
-    STARTED: { "name": "Not Started", "id": 1 },
-    STOPPED: { "name": "Not Started", "id": 2 },
-    NOT_STARTED: { "name": "Not Started", "id": 3 },
-    RUNNING: { "name": "Running", "id": 4 },
-    ERROR: { "name": "Error", "id": 5 }
-  }
+function fmt(date, format = 'YYYY-MM-DD hh:mm:ss') {
+    const pad2 = (n) => n.toString().padStart(2, '0');
   
-  const ScriptEnabledStatus = {
-    DISABLED: { "name": "Disabled", "id": 0, "value": false },
-    ENABLED: { "name": "Enabled", "id": 1, "value": true },
-    TEST: { "name": "TEST", "id": -1, "value": false },
+    const map = {
+      YYYY: date.getFullYear(),
+      MM: pad2(date.getMonth() + 1),
+      DD: pad2(date.getDate()),
+      hh: pad2(date.getHours()),
+      mm: pad2(date.getMinutes()),
+      ss: pad2(date.getSeconds()),
+    };
+  
+    return Object.entries(map).reduce((prev, entry) => prev.replace(...entry), format);
   }
 
 class PropsHelper{
-    constructor(){
+    constructor(pageProps=null){
         this.props = {}
+        this.pageProps = pageProps;
+    }
+    isPropInDB(propName){
+        if(!this.pageProps) return true;
+        return propName in this.pageProps;
     }
     addStatus(propName, statusName){
+        if(!this.isPropInDB(propName)) return this;
+        if(!statusName) return this;
         this.props[propName] = { status: { name: statusName}};
         return this;
     }
     addCheckbox(propName, ticked){
+        if(!this.isPropInDB(propName)) return this;
         this.props[propName] = { checkbox: ticked };
         return this;
     }
     addRichText(propName, textContent){
+        if(!this.isPropInDB(propName)) return this;
+        if(!textContent) return this;
         this.props[propName] = { rich_text: [{text: { content: textContent}}]};
         return this;
     }
     addTitle(propName, textContent) {
+        if(!this.isPropInDB(propName)) return this;
+        if(!textContent) return this;
         this.props[propName] = { title: [{ text: { content: textContent }}] }
         return this;
     }
     addMultiSelect(propName, namesList){
+        if(!this.isPropInDB(propName)) return this;
         this.props[propName] = { multi_select: namesList}
         return this;
     }
     addSelect(propName, selectedName) {
+        if(!this.isPropInDB(propName)) return this;
+        if(!selectedName) return this;
         this.props[propName] = { select: { name: selectedName}}
         return this;
     }
     addLink(propName, url) {
+        if(!this.isPropInDB(propName)) return this;
+        if(!url) return this;
         this.props[propName] = {url: url}
         return this;
     }
@@ -81,6 +98,43 @@ class NotionHelper{
         return pages
     }
 
+    retrievePage(pId){
+        return this.notion.pages.retrieve({
+            page_id: pId
+        });
+    }
+
+    async retrievePageBlocks(bId){
+        console.log("Waiting for children list")
+        const response = await this.notion.blocks.children.list({
+            block_id: bId,
+            page_size: 50,
+        });
+        var blocks = [];
+        for(var block of response.results){
+            const blockData = await this.notion.blocks.retrieve({
+                block_id: block.id
+            });
+            await sleep(250)
+            try{
+                for(var blockText of blockData.paragraph.text){
+                    var urls = blockText.plain_text.split(/\n|,/);
+                    blocks = blocks.concat(urls)
+                }
+            }
+            catch(error){
+                console.error(`Error getting text from page: ${error}`)
+            }
+        }
+        return blocks;
+    }
+
+    retrieveBlock(bId){
+        return this.notion.blocks.retrieve({
+            block_id: bId
+        });
+    }
+
     updatePage(pId, props, respHandler=null, errorHandler=null){
         return this.notion.pages.update({
             page_id: pId,
@@ -104,7 +158,7 @@ class NotionHelper{
         });
     }
 
-    searchDBs(respHandler=null, errorHandler=null){
+    getAttachedDBs(respHandler=null, errorHandler=null){
         return this.notion.search({
             filter: { value: 'database', property: 'object'}
         })
@@ -157,12 +211,8 @@ class Utils {
 
 class MetadataHelper {
 
-    async getLinkMetadata(entry) {
-        // console.log(entry);
-        if (!entry.link.url || entry.link.url === "") {
-            entry.link.url = entry.title;
-        }
-        let url = entry.link.url;
+    async getLinkMetadata(url) {
+        console.log(`Getting metadata for ${url}`)
         let data = {};
         let type = "";
         if (url.toLowerCase().includes("youtu")) {
@@ -177,9 +227,8 @@ class MetadataHelper {
             data = await this.getURLMetadata(url)
             type = "URL";
         }
-        console.log(`Got ${type} metadata from: ${url}`);
-        console.log(data);
-        data.url = url;
+        if(!data) return null;
+        data['url'] = url;
         return data;
     }
     
@@ -202,16 +251,21 @@ class MetadataHelper {
 
     async getDOIMetadata(url) {
         try {
-            const citationJSON = await Cite.input(url)[0];
+            const citation = await Cite.input(url);
+            const citationJSON = citation[0];
+            const citationString = new Cite(citation).format('bibtex')
             return {
                 title: citationJSON.title,
                 author: citationJSON.author.map((x) => x.given + " " + x.family),
-                type: "Paper"
+                type: "Paper",
+                citation: citationString,
+                pdfLink: `https://sci-hub.ru/${url}`
             }
         }
         catch (error) {
             console.log("Error DOI metadata " + url);
             console.error(error);
+            return null;
         }
     }
 
@@ -233,7 +287,7 @@ class MetadataHelper {
 
 }
 
-module.exports = { PropsHelper, NotionHelper, ScriptStatus, ScriptEnabledStatus, ParamsSchema, Utils, MetadataHelper };
+module.exports = { PropsHelper, NotionHelper, ParamsSchema, Utils, MetadataHelper, fmt };
 
 // config.NOTION_DATABASE_IDs.forEach((databaseId) =>
 //   {

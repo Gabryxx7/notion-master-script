@@ -2,8 +2,9 @@
 const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
 const config = require('./config.no-commit.json')
-const NotionLinkUpdater = require("./scripts/link_metadata")
-const { Utils, ScriptStatus, ScriptEnabledStatus, PropsHelper, NotionHelper } = require("./utils.js")
+const { Utils, PropsHelper, NotionHelper } = require("./utils.js")
+const { ScriptHelper } = require("./ScriptHelper.js")
+const sleep = require("timers/promises").setTimeout;
 
 dotenv.config()
 // for(let key in config.availableScripts){
@@ -12,149 +13,6 @@ dotenv.config()
 const notion = new Client({ auth: config.NOTION_KEY })
 
 
-class ScriptHelper {
-  constructor(notion, entry, entryIndex) {
-    this.notion = notion;
-    this.errorsList = []
-    this.entryIndex = entryIndex
-    this.entry = entry;
-    this.props = this.entry.properties;
-    this.scriptStatus = ScriptStatus.NONE;
-    this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
-    this.scriptInstance = null;
-    this.databaseId = null;
-    this.pageName = "none";
-    try {
-      this.databaseId = this.props["Page ID"].title[0].plain_text;
-      this.pageName = this.props["Page Name"].rich_text[0].plain_text;
-    } catch (error) {
-      this.throwError(`Entry ${this.entryIndex} No page/database ID found, does this page/db exist? Was it added manually?`)
-    }
-  }
-
-  parseEnabledStatus(statusProp){
-    try {
-      var statusName = statusProp.status.name;
-      return ScriptEnabledStatus[statusName.toUpperCase()]
-    } catch (error) {
-      error.m
-      this.throwError("Error checking Enabled status, script automatically Disabled", error)
-    }
-    return ScriptEnabledStatus.DISABLED;
-  }
-
-
-  throwError(msg, errorObj=null){
-    if(errorObj != null){
-      msg =`${msg}: ${errorObj.message}`
-    }
-    this.errorsList.push({msg: msg, errorObj: errorObj});
-    console.error(msg)
-    // console.error(msg, errorObj)
-    console.log()
-  }
-  
-
-  flushErrors() {
-    var ret = this.errorsList.map((x) => x.msg).join("\n> ")
-    ret = `> ${ret}`;
-    // console.log(`\n**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
-    this.errorsList = [];
-    return ret;
-  }
-
-  getParamsJson(){
-    var jsonParams = {}
-    try{
-      var paramsStr = `${this.props.Parameters.rich_text[0].plain_text.toString('utf8')}`;
-      // console.log("\n", paramsStr, "\n")
-      paramsStr = paramsStr.replaceAll(/“|”/g, '"');
-      // console.log("\n", paramsStr, "\n")
-      try{
-        jsonParams = JSON.parse(paramsStr, 'utf8');
-        console.log(jsonParams)
-      } catch(error){
-        this.throwError("Error parsing script parameters", error)
-      }
-    } catch(error){
-      // this.throwError("No parameters passed", error)
-    }
-    if(!jsonParams.hasOwnProperty("databaseId") && this.databaseId != null){
-      jsonParams['databaseId'] = this.databaseId.replaceAll("-", "");
-    }
-    return jsonParams;
-  }
-
-  async createScriptInstance() {
-    var scriptName = this.props.SCRIPT_ID.select.name;
-    console.log(`Creating script Instance ${scriptName} for ${this.pageName} (${this.databaseId})`)
-    for (let script of config.AVAILABLE_SCRIPTS) {
-      if (script.name == scriptName) {
-        var className = script.className;
-        try{
-          console.log(`** Instantiating ${className} **`)
-          var params = this.getParamsJson();
-          var paramsOk = (eval(className)).paramsSchema.checkParams(params);
-          this.scriptInstance = new (eval(className))(this, this.notion, params);
-        } catch(error) {
-          this.throwError(`Error instantiating ${className} on ${this.pageName}`, error);
-        }
-        return this.scriptInstance;
-      }
-    }
-    this.throwError(`No script found with the name ${scriptName} for ${this.pageName} (${this.databaseId})`);
-  }
-
-  startScript() {
-    if(this.scriptInstance == null){
-      this.createScriptInstance()
-      .then(async () => await this.updateStatus(ScriptStatus.NOT_STARTED))
-      .then(async () => {
-        if(this.scriptInstance == null){
-          // this.throwError("Script not instantiated")
-          return;
-        }
-        this.scriptInstance.start()
-      })
-      .then(async () => await this.updateStatus(ScriptStatus.STARTED))
-      return;
-    }
-    this.scriptInstance.start()
-    .then(async () => await this.updateStatus(ScriptStatus.STARTED));
-  }
-
-  async stopScript() {
-    if(this.scriptInstance != null){
-      this.scriptInstance.stop()
-      await this.updateStatus(ScriptStatus.STOPPED);
-    }
-  }
-
-  getProps() {
-    return new PropsHelper()
-    .addStatus("Status", this.scriptStatus.name)
-    .addStatus("Enabled?", this.enabledStatus.name)
-    .addRichText("Errors", this.flushErrors())
-    .build()
-  }
-
-  async updateStatus(newStatus){
-    this.scriptStatus = newStatus;
-    await this.updateEntry();
-  }
-
-  async updateEntry(newEntry=null){
-    if(newEntry != null){
-      this.entry = newEntry;
-      this.props = this.entry.props;
-      this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
-    }
-    if(this.enabledStatus.id == ScriptEnabledStatus.DISABLED.id){
-      await this.stopScript();
-    }
-    await this.notion.updatePage(this.entry.id, this.getProps())
-  }
-}
 
 class ScriptsManager {
   constructor(notion, scriptsList, masterDatabaseID, refreshTime) {
@@ -171,25 +29,27 @@ class ScriptsManager {
   }
 
   async update() {
-    this.updateEntries()
+    this.updateScriptsDb()
       .then(() => {
-        return this.updateAttachedDatabases()
+        return this.updateScriptsOptions()
       }).then(() => {
-        return this.updateScriptOptions()
-      }).then(() => {
-        return this.updateScriptsStatus()
+        return this.updateScriptsEntry()
       }).then(() =>{
         console.log("Completed! Updating running scripts")
       })
   }
 
-  async updateScriptsStatus(){
+  async updateScriptsEntry(){
+    console.log("\n**** Updating scripts Statuses! ****")
     for (const [key, value] of Object.entries(this.scriptEntries)) {
       value.startScript();
+      await value.updateEntryPage();
+      await sleep(500); // This is needed to avoid Error 409 "Conflict while saving", it's caused by Notion internal working. See: https://www.reddit.com/r/Notion/comments/s8uast/error_deleting_all_the_blocks_in_a_page/
+      // console.log("After Wait")
     }
   }
 
-  async updateScriptOptions() {
+  async updateScriptsOptions() {
     console.log("\n**** Updating scripts options! ****")
     if(!this.masterDatabaseObj){
       console.error("No master database set! Did you add it to the config.json file? Did you connect the integration with it?")
@@ -212,10 +72,36 @@ class ScriptsManager {
     })
   }
 
-  async updateAttachedDatabases() {
+  isMasterDatabase(db) {
+    return db.id.replaceAll("-", "") == this.masterDatabaseID;
+  }
+
+  async updateScriptsDb() {
+    console.log("\n**** Updating scripts instances entries! ****")
+    var dbEntries = await this.notion.getDBEntries(this.masterDatabaseID);
+    for (let [index, entry] of dbEntries.entries()) {
+      if(!this.scriptEntries.hasOwnProperty(entry.id)){
+        var scriptName = entry.properties?.SCRIPT_ID?.select?.name;
+        var scriptClassName = null;
+        if(scriptName){
+          for (let script of config.AVAILABLE_SCRIPTS) {
+            if (script.name == scriptName) {
+              scriptClassName = script.className;
+              break;
+            }
+          }
+        }
+        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index, scriptClassName);
+        console.error(`No script found with the name ${scriptName} for ${entry.id}`);
+      } else{
+        await this.scriptEntries[entry.id].updateEntry(entry);
+      }
+      await this.scriptEntries[entry.id].updateEntryPage();
+    }
+
     console.log("\n**** Updating attached DBs ****")
     try{
-      var response =  await this.notion.searchDBs();
+      var response =  await this.notion.getAttachedDBs();
       response.results.map((attachedDb) => {
         if(this.isMasterDatabase(attachedDb)){
           if(this.masterDatabaseObj == null){
@@ -245,22 +131,6 @@ class ScriptsManager {
     }catch(error){
       console.error("Error retreiving attached DBs", error)
     }
-  }
-
-  isMasterDatabase(db) {
-    return db.id.replaceAll("-", "") == this.masterDatabaseID;
-  }
-
-  async updateEntries() {
-    console.log("\n**** Updating scripts instances entries! ****")
-    var dbEntries = await this.notion.getDBEntries(this.masterDatabaseID);
-    dbEntries.map(async (entry, index) => {
-      if(this.scriptEntries.hasOwnProperty(entry.id)){
-        await entry.updateEntry(entry);
-      } else{
-        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index);
-      }
-    })
   }
 }
 
