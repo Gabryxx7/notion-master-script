@@ -102,6 +102,9 @@ class ScriptHelper {
       if(this.scriptInstance == null){
         this.createScriptInstance()
       }
+      if([ScriptStatus.RUNNING.id, ScriptStatus.STARTED.id].includes(this.scriptStatus.id)){
+        return;
+      }
       if(this.shouldStop()){
         return;
       }
@@ -126,7 +129,6 @@ class ScriptHelper {
       this.scriptInstance.update();
       this.notion.getUpdatedDBEntry(this.masterDatabaseID, 'Page ID', this.databaseId)
         .then((res) => {
-          console.log(`[${this.scriptId}] Updating entry`)
           // console.log(`[${this.scriptId}] Updated db entry : ${res.results.length}`)
           // console.log(res.results[0])
           this.updateProps(res.results[0]);

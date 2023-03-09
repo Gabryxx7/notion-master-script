@@ -30,16 +30,21 @@ class ScriptsManager {
     this.attachedDatabases = []
   }
 
-  async update() {
+  async update(firstInit=false) {
     this.updateScriptsDb()
       .then(() => {
         return this.updateScriptsOptions()
       }).then(() => {
         return this.startScripts()
       }).then(() =>{
-        console.log("---- Init Completed ---- ")
+        if(firstInit)
+          console.log("---- Init Completed ---- ")
+        else
+          console.log("---- Master DB Script Manager update ---- ")
+        setTimeout(() => this.update(), this.refreshTime)
       })
   }
+  
 
   async startScripts(){
     console.log("\n**** Starting scripts! ****")
@@ -100,7 +105,7 @@ class ScriptsManager {
       await this.scriptEntries[entry.id].updateScriptEntry();
     }
 
-    console.log("\n**** Updating attached DBs ****")
+    console.log("\n**** Updating attached DBs metadata ****")
     try{
       var response =  await this.notion.getAttachedDBs();
       response.results.map((attachedDb) => {
@@ -125,8 +130,9 @@ class ScriptsManager {
           .addRichText("Page Link", attachedDb.url)
           .addSelect("SCRIPT_ID", "NONE")
           .build()
-        this.notion.createPage(NotionHelper.ParentType.DATABASE, this.masterDatabaseObj.id, props)
-          .then((response) => this.notion.deletePage(response.id))
+          
+        this.notion.createPage(NotionHelper.ParentType.DATABASE, this.masterDatabaseID, props)
+          .then((response) => console.log(`New page created {response.id}`))
           .catch((error) => console.error("Error creating page for new Attached DB", error))
       })  
     }catch(error){
@@ -135,8 +141,8 @@ class ScriptsManager {
   }
 }
 
-const scriptsManager = new ScriptsManager(notion, config.AVAILABLE_SCRIPTS, config.NOTION_SCRIPTS_DATABASE_ID, 10000);
+const scriptsManager = new ScriptsManager(notion, config.AVAILABLE_SCRIPTS, config.NOTION_SCRIPTS_DATABASE_ID, config.SCRIPT_DB_REFRESH_TIME);
 (async () => {
-  await scriptsManager.update()
+  await scriptsManager.update(true);
 })()
 
