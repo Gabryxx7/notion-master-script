@@ -17,11 +17,12 @@ const notion = new Client({ auth: config.NOTION_KEY })
 
 
 class ScriptsManager {
-  constructor(notion, scriptsList, masterDatabaseID, refreshTime) {
+  constructor(notion, scriptsList, masterDatabaseID, columnsSchema, refreshTime) {
     this.notion = new NotionHelper(notion);
     this.masterDatabaseID = masterDatabaseID;
     this.masterDatabaseObj = null;
     this.refreshTime = refreshTime;
+    this.columnsSchema = columnsSchema;
     this.availableScripts = scriptsList;
     for(let key in this.availableScripts){
       this.availableScripts[key]['class'] = require(this.availableScripts[key].path)
@@ -41,7 +42,7 @@ class ScriptsManager {
           console.log("---- Init Completed ---- ")
         else
           console.log("---- Master DB Script Manager update ---- ")
-        setTimeout(() => this.update(), this.refreshTime)
+          setTimeout(async () => {await this.update()}, this.refreshTime)
       })
   }
   
@@ -61,7 +62,7 @@ class ScriptsManager {
       console.error("No master database set! Did you add it to the config.json file? Did you connect the integration with it?")
       return;
     }
-    var dbOptions = this.masterDatabaseObj.properties.SCRIPT_ID.select.options;
+    var dbOptions = this.masterDatabaseObj.properties[this.columnsSchema.scriptId].select.options;
     this.availableScripts.map((availableScript) => {
       var isOptionInDb = dbOptions.find((opt) => opt.name == availableScript.name)
       if(isOptionInDb === undefined){
@@ -87,7 +88,7 @@ class ScriptsManager {
     var dbEntries = await this.notion.getDBEntries(this.masterDatabaseID);
     for (let [index, entry] of dbEntries.entries()) {
       if(!this.scriptEntries.hasOwnProperty(entry.id)){
-        var scriptName = entry.properties?.SCRIPT_ID?.select?.name;
+        var scriptName = entry.properties[this.columnsSchema.scriptId]?.select?.name;
         var scriptClassName = null;
         if(scriptName){
           for (let script of config.AVAILABLE_SCRIPTS) {
@@ -97,8 +98,12 @@ class ScriptsManager {
             }
           }
         }
-        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index, scriptClassName, this.masterDatabaseID);
-        if(!scriptClassName) console.error(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`);
+        console.log(entry.properties[this.columnsSchema.pageLink])
+        console.log(entry.properties[this.columnsSchema.pageLink].rich_text[0].text)
+        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index, scriptClassName, this.masterDatabaseID, this.columnsSchema);
+        if(!scriptClassName){
+          this.scriptEntries[entry.id].throwError(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`)
+        }
       } else{
         this.scriptEntries[entry.id].updateProps(entry);
       }
@@ -125,10 +130,10 @@ class ScriptsManager {
         }
         console.log(`Adding new attached DB! ${attachedDb.id}`)
         var props = new PropsHelper()
-          .addTitle("Page ID", attachedDb.id)
-          .addRichText("Page Name", attachedDb.title[0].plain_text)
-          .addRichText("Page Link", attachedDb.url)
-          .addSelect("SCRIPT_ID", "NONE")
+          .addTitle(this.columnsSchema.pageId, attachedDb.id)
+          .addRichText(this.columnsSchema.pageName, attachedDb.title[0].plain_text)
+          .addTextLink(this.columnsSchema.pageLink, attachedDb.url, attachedDb.title[0].plain_text)
+          .addSelect(this.columnsSchema.scriptId, "NONE")
           .build()
           
         this.notion.createPage(NotionHelper.ParentType.DATABASE, this.masterDatabaseID, props)
@@ -141,7 +146,7 @@ class ScriptsManager {
   }
 }
 
-const scriptsManager = new ScriptsManager(notion, config.AVAILABLE_SCRIPTS, config.NOTION_SCRIPTS_DATABASE_ID, config.SCRIPT_DB_REFRESH_TIME);
+const scriptsManager = new ScriptsManager(notion, config.AVAILABLE_SCRIPTS, config.NOTION_SCRIPTS_DATABASE_ID, config.COLUMNS_SCHEMA, config.SCRIPT_DB_REFRESH_TIME);
 (async () => {
   await scriptsManager.update(true);
 })()

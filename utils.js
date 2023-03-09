@@ -44,6 +44,13 @@ class PropsHelper{
         this.props[propName] = { rich_text: [{text: { content: textContent}}]};
         return this;
     }
+    addTextLink(propName, url, title=null) {
+        if(!this.isPropInDB(propName)) return this;
+        if(!url) return this;
+        if(!title) title = url;
+        this.props[propName] = { rich_text: [{text: { content: title, link: {url: url}}}]};
+        return this;
+    }
     addTitle(propName, textContent) {
         if(!this.isPropInDB(propName)) return this;
         if(!textContent) return this;

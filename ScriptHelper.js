@@ -1,49 +1,39 @@
 
 const { Utils, MetadataHelper, PropsHelper, ParamsSchema, fmt } = require('./utils.js')
-const { ScriptStatus, ScriptEnabledStatus } = require('./ScriptStatus.js')
+const { ScriptStatus } = require('./ScriptStatus.js')
 const NotionLinkUpdater = require("./scripts/link_metadata")
 
 
 class ScriptHelper {
-    constructor(notion, entry, entryIndex, className, masterDatabaseID) {
+    constructor(notion, entry, entryIndex, className, masterDatabaseID, columnsSchema) {
       this.notion = notion;
       this.masterDatabaseID = masterDatabaseID;
       this.errorsList = []
       this.entryIndex = entryIndex
       this.entry = entry;
+      this.columnsSchema = columnsSchema;
       this.props = entry.properties;
-      this.scriptName = this.props?.SCRIPT_ID?.select?.name;
+      this.scriptName = this.props[this.columnsSchema.scriptId]?.select?.name;
       this.className = className;
       this.scriptStatus = ScriptStatus.NONE;
-      this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
+      this.enabledStatus = this.props[this.columnsSchema.enabledStatus].checkbox;
       this.scriptInstance = null;
       this.databaseId = null;
       this.pageName = "none";
       this.refreshTime = 3000;
       this.scriptId = `Entry Index ${this.entryIndex}`
       try {
-        this.databaseId = this.props["Page ID"].title[0].plain_text;
-        this.pageName = this.props["Page Name"].rich_text[0].plain_text;
+        this.databaseId = this.props[this.columnsSchema.pageId].title[0].plain_text;
+        this.pageName = this.props[this.columnsSchema.pageName].rich_text[0].plain_text;
         this.scriptId = `${this.pageName} (${this.scriptName})`
       } catch (error) {
         this.throwError(`No page/database ID found, does this page/db exist? Was it added manually?`)
       }
       this.scriptLoopHandle = null;
-    }
-  
-    parseEnabledStatus(statusProp){
-      try {
-        var statusName = statusProp.status.name;
-        return ScriptEnabledStatus[statusName.toUpperCase()]
-      } catch (error) {
-        // error.m
-        this.throwError("Error checking Enabled status, script automatically Disabled", error)
-      }
-      return ScriptEnabledStatus.DISABLED;
-    }
-  
+    }  
   
     throwError(msg, errorObj=null){
+      this.updateStatus(ScriptStatus.ERROR)
       if(errorObj != null){
         msg =`${msg}: ${errorObj.message}`
       }
@@ -54,7 +44,7 @@ class ScriptHelper {
     
   
     flushErrors() {
-        var ret = this.errorsList.length > 0 ? this.errorsList.map((x) => x.msg).join("\n> ") : "No Errors";
+        var ret = this.errorsList.length > 0 ? this.errorsList.map((x) => x.msg).join("\n> ") : "";
         // console.log(`\n**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
         this.errorsList = [];
         return ret;
@@ -63,7 +53,7 @@ class ScriptHelper {
     getParamsJson(){
       var jsonParams = {}
       try{
-        var paramsStr = `${this.props.Parameters.rich_text[0].plain_text.toString('utf8')}`;
+        var paramsStr = `${this.props[this.columnsSchema.scriptParams].rich_text[0].plain_text.toString('utf8')}`;
         // console.log("\n", paramsStr, "\n")
         paramsStr = paramsStr.replaceAll(/“|”/g, '"');
         // console.log("\n", paramsStr, "\n")
@@ -95,17 +85,17 @@ class ScriptHelper {
     }
 
     shouldStop(){
-      return ([ScriptStatus.STOPPED.id, ScriptStatus.DISABLED.id].includes(this.scriptStatus.id) || this.enabledStatus.id == ScriptEnabledStatus.DISABLED.id)
+      return ([ScriptStatus.STOPPED.id, ScriptStatus.DISABLED.id, ScriptStatus.ERROR.id].includes(this.scriptStatus.id) || !this.enabledStatus)
     }
 
     startScript() {
       if(this.scriptInstance == null){
         this.createScriptInstance()
       }
-      if([ScriptStatus.RUNNING.id, ScriptStatus.STARTED.id].includes(this.scriptStatus.id)){
+      if(this.shouldStop()){
         return;
       }
-      if(this.shouldStop()){
+      if([ScriptStatus.RUNNING.id, ScriptStatus.STARTED.id].includes(this.scriptStatus.id)){
         return;
       }
       this.updateStatus(ScriptStatus.STARTED);
@@ -127,7 +117,7 @@ class ScriptHelper {
       this.updateStatus(ScriptStatus.RUNNING);
       console.log(`[${this.scriptId}] ${fmt(new Date())} Update`)
       this.scriptInstance.update();
-      this.notion.getUpdatedDBEntry(this.masterDatabaseID, 'Page ID', this.databaseId)
+      this.notion.getUpdatedDBEntry(this.masterDatabaseID, this.columnsSchema.pageId, this.databaseId)
         .then((res) => {
           // console.log(`[${this.scriptId}] Updated db entry : ${res.results.length}`)
           // console.log(res.results[0])
@@ -141,9 +131,9 @@ class ScriptHelper {
   
     getProps() {
       return new PropsHelper()
-      .addStatus("Status", this.scriptStatus.name)
-      .addStatus("Enabled?", this.enabledStatus.name)
-      .addRichText("Updates", `${fmt(new Date())} > ${this.flushErrors()}`)
+      .addStatus(this.columnsSchema.runningStatus, this.scriptStatus.name)
+      .addCheckbox(this.columnsSchema.enabledStatus, this.enabledStatus)
+      .addRichText(this.columnsSchema.errors, `> ${this.flushErrors()}`)
       .build()
     }
   
@@ -155,20 +145,21 @@ class ScriptHelper {
     }
 
     async updateScriptEntry(){
-      // console.log(`[${this.scriptId}] ${this.enabledStatus.name}`)
-        if(this.enabledStatus.id == ScriptEnabledStatus.DISABLED.id){
-          this.updateStatus(ScriptStatus.DISABLED);
-          this.stopScript();
-        }
-        await this.notion.updatePage(this.entry.id, this.getProps())
-        // console.log(`Updating Entry: ${JSON.stringify(this.props["Page Name"]?.rich_text[0]?.text)} (Status: ${this.scriptStatus.name})`)
+      if(!this.enabledStatus){
+        this.updateStatus(ScriptStatus.DISABLED);
+      }
+      if(this.shouldStop()){
+        this.stopScript();
+      }
+      await this.notion.updatePage(this.entry.id, this.getProps())
+      // console.log(`Updating Entry: ${JSON.stringify(this.props["Page Name"]?.rich_text[0]?.text)} (Status: ${this.scriptStatus.name})`)
     }
   
     updateProps(newEntry=null){
       if(newEntry != null){
         this.entry = newEntry;
         this.props = newEntry.properties;
-        this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
+        this.enabledStatus = this.props[this.columnsSchema.enabledStatus].checkbox;
       }
     }
   }

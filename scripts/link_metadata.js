@@ -3,7 +3,6 @@ const { Client } = require("@notionhq/client")
 // const config = require('./config.no-commit.json')
 const urlMetadata = require('url-metadata')
 const { Utils, MetadataHelper, PropsHelper, ParamsSchema, NotionHelper } = require('../utils.js')
-const { ScriptStatus, ScriptEnabledStatus } = require('../ScriptStatus.js')
 
 // const databaseId = config.NOTION_DATABASE_ID
 
