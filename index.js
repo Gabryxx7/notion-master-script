@@ -2,11 +2,13 @@
 const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
 const config = require('./config.no-commit.json')
+dotenv.config()
+
 const { Utils, PropsHelper, NotionHelper } = require("./utils.js")
 const { ScriptHelper } = require("./ScriptHelper.js")
 const sleep = require("timers/promises").setTimeout;
 
-dotenv.config()
+
 // for(let key in config.availableScripts){
 //   eval(`const ${config.AVAILABLE_SCRIPTS[key].className} = require('${config.AVAILABLE_SCRIPTS[key].path}')`)
 // }
@@ -33,17 +35,16 @@ class ScriptsManager {
       .then(() => {
         return this.updateScriptsOptions()
       }).then(() => {
-        return this.updateScriptsEntry()
+        return this.startScripts()
       }).then(() =>{
-        console.log("Completed! Updating running scripts")
+        console.log("---- Init Completed ---- ")
       })
   }
 
-  async updateScriptsEntry(){
-    console.log("\n**** Updating scripts Statuses! ****")
-    for (const [key, value] of Object.entries(this.scriptEntries)) {
-      value.startScript();
-      await value.updateEntryPage();
+  async startScripts(){
+    console.log("\n**** Starting scripts! ****")
+    for (const [key, scriptEntry] of Object.entries(this.scriptEntries)) {
+      scriptEntry.startScript();
       await sleep(500); // This is needed to avoid Error 409 "Conflict while saving", it's caused by Notion internal working. See: https://www.reddit.com/r/Notion/comments/s8uast/error_deleting_all_the_blocks_in_a_page/
       // console.log("After Wait")
     }
@@ -91,12 +92,12 @@ class ScriptsManager {
             }
           }
         }
-        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index, scriptClassName);
-        console.error(`No script found with the name ${scriptName} for ${entry.id}`);
+        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index, scriptClassName, this.masterDatabaseID);
+        if(!scriptClassName) console.error(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`);
       } else{
-        await this.scriptEntries[entry.id].updateEntry(entry);
+        this.scriptEntries[entry.id].updateProps(entry);
       }
-      await this.scriptEntries[entry.id].updateEntryPage();
+      await this.scriptEntries[entry.id].updateScriptEntry();
     }
 
     console.log("\n**** Updating attached DBs ****")

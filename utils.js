@@ -80,6 +80,37 @@ class NotionHelper{
         this.notion = notionRef;
     }
 
+
+        // var res = {};
+        // (async () => {
+        // const databaseId = '115ed0a663464617b95cea9edf71d34a';
+        // const idFieldName = 'Page ID';
+        // const attachedDBId = 'ae32ca24-0afd-4cb0-8445-972f4e01139f';
+        // const response = await notion.databases.query({
+        //     database_id: databaseId,
+        //     filter: {
+        //     property: idFieldName,
+        //     rich_text: {
+        //         contains: attachedDBId
+        //     }
+        // }
+        // });
+        // res = response;
+        // console.log(response);
+        // })();
+
+    async getUpdatedDBEntry(masterDbId, idFieldName, attachedDbId){
+        return this.notion.databases.query({
+            database_id: masterDbId,
+            filter: {
+                property: idFieldName,
+                rich_text: {
+                    contains: attachedDbId
+                }
+            }
+        });
+    }
+
     async getDBEntries(dbId) {
         const pages = [];
         let cursor = undefined;
@@ -180,6 +211,7 @@ class ParamsSchema{
         }
         return null;
     }
+
     checkParams(params){
         for (const [paramName, sParam] of Object.entries(this.paramsData)) {
             if(!params.hasOwnProperty(sParam.name)){
@@ -189,16 +221,18 @@ class ParamsSchema{
                 params[sParam.name] = sParam.defaultVal;
             }
             else{
+                var addedParams = [];
                 if (params[sParam.name].constructor == Object){
                     for (const [defaultParamName, defaultParam] of Object.entries(sParam.defaultVal)){
                         if(!params[sParam.name].hasOwnProperty(defaultParamName)){
-                            console.log(`Adding default param: ${defaultParamName}`)
+                            // console.log(`Adding default param: ${defaultParamName}`)
+                            addedParams.push(defaultParamName)
                             params[sParam.name][defaultParamName] = defaultParam;
                         }
                     }
                 }
-                console.log("FInal column schema: ", params[sParam.name])
-
+                if(addedParams.length > 0)
+                    console.log(`Added params: ${addedParams}`)
             }
         }
         return true;

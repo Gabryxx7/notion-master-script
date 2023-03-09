@@ -5,24 +5,30 @@ const NotionLinkUpdater = require("./scripts/link_metadata")
 
 
 class ScriptHelper {
-    constructor(notion, entry, entryIndex, className) {
+    constructor(notion, entry, entryIndex, className, masterDatabaseID) {
       this.notion = notion;
+      this.masterDatabaseID = masterDatabaseID;
       this.errorsList = []
       this.entryIndex = entryIndex
       this.entry = entry;
-      this.props = this.entry.properties;
+      this.props = entry.properties;
+      this.scriptName = this.props?.SCRIPT_ID?.select?.name;
       this.className = className;
       this.scriptStatus = ScriptStatus.NONE;
       this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
       this.scriptInstance = null;
       this.databaseId = null;
       this.pageName = "none";
+      this.refreshTime = 3000;
+      this.scriptId = `Entry Index ${this.entryIndex}`
       try {
         this.databaseId = this.props["Page ID"].title[0].plain_text;
         this.pageName = this.props["Page Name"].rich_text[0].plain_text;
+        this.scriptId = `${this.pageName} (${this.scriptName})`
       } catch (error) {
-        this.throwError(`Entry ${this.entryIndex} No page/database ID found, does this page/db exist? Was it added manually?`)
+        this.throwError(`No page/database ID found, does this page/db exist? Was it added manually?`)
       }
+      this.scriptLoopHandle = null;
     }
   
     parseEnabledStatus(statusProp){
@@ -42,9 +48,8 @@ class ScriptHelper {
         msg =`${msg}: ${errorObj.message}`
       }
       this.errorsList.push({msg: msg, errorObj: errorObj});
-      console.error(msg)
+      console.error(`[${this.scriptId}] msg`)
       // console.error(msg, errorObj)
-      console.log()
     }
     
   
@@ -64,7 +69,6 @@ class ScriptHelper {
         // console.log("\n", paramsStr, "\n")
         try{
           jsonParams = JSON.parse(paramsStr, 'utf8');
-          console.log(jsonParams)
         } catch(error){
           this.throwError("Error parsing script parameters", error)
         }
@@ -77,41 +81,60 @@ class ScriptHelper {
       return jsonParams;
     }
   
-    async createScriptInstance() {
-      console.log(`Creating script Instance ${this.className} for ${this.pageName} (${this.databaseId})`)
+    createScriptInstance() {
       try{
-        console.log(`\n*** Instantiating ${this.className} ***`)
+        console.log(`\n*** Instantiating ${this.className} for [${this.scriptId}] ***`)
         var params = this.getParamsJson();
         var paramsOk = (eval(this.className)).paramsSchema.checkParams(params);
+        this.refreshTime = params['refreshTime'] ? params['refreshTime'] : this.refreshTime;
         this.scriptInstance = new (eval(this.className))(this, this.notion, params);
       } catch(error) {
-        this.throwError(`Error instantiating ${this.className} on ${this.pageName}`, error);
+        this.throwError(`Error instantiating ${this.className} for [${this.scriptId}] `, error);
       }
       return this.scriptInstance;
     }
-  
+
+    shouldStop(){
+      return ([ScriptStatus.STOPPED.id, ScriptStatus.DISABLED.id].includes(this.scriptStatus.id) || this.enabledStatus.id == ScriptEnabledStatus.DISABLED.id)
+    }
+
     startScript() {
       if(this.scriptInstance == null){
         this.createScriptInstance()
-        .then(async () => {
-          if(this.scriptInstance == null){
-            // this.throwError("Script not instantiated")
-            return;
-          }
-          this.updateStatus(ScriptStatus.STARTED)
-          this.scriptInstance.start()
-        })
+      }
+      if(this.shouldStop()){
         return;
       }
-  
-      this.scriptInstance.start().then(async () => await this.updateStatus(ScriptStatus.STARTED));
+      this.updateStatus(ScriptStatus.STARTED);
+      this.update();
     }
   
-    async stopScript(stoppedStatus=ScriptStatus.STOPPED) {
-      if(this.scriptInstance != null){
-        this.scriptInstance.stop()
+    stopScript() {
+      if (this.scriptLoopHandle != null){
+          clearTimeout(this.scriptLoopHandle)
       }
-      await this.updateStatus(stoppedStatus);
+    }
+
+    update(){
+      if(this.shouldStop()){
+        console.log(`[${this.scriptId}] Stopping: ${this.scriptStatus.name}`);
+        (async () => {this.updateScriptEntry()})();
+        return;
+      }
+      this.updateStatus(ScriptStatus.RUNNING);
+      console.log(`[${this.scriptId}] ${fmt(new Date())} Update`)
+      this.scriptInstance.update();
+      this.notion.getUpdatedDBEntry(this.masterDatabaseID, 'Page ID', this.databaseId)
+        .then((res) => {
+          console.log(`[${this.scriptId}] Updating entry`)
+          // console.log(`[${this.scriptId}] Updated db entry : ${res.results.length}`)
+          // console.log(res.results[0])
+          this.updateProps(res.results[0]);
+          this.updateScriptEntry()
+            .then(() => setTimeout(() => this.update(), this.refreshTime))
+            .catch((error) => this.throwError(error))
+        })
+        .catch((error) => this.throwError(error))
     }
   
     getProps() {
@@ -122,25 +145,27 @@ class ScriptHelper {
       .build()
     }
   
-    async updateStatus(newStatus){
+    updateStatus(newStatus){
       if(this.scriptStatus.id != newStatus.id){
+        console.log(`[${this.scriptId}] Updating status: ${this.scriptStatus.name} -> ${newStatus.name}`)
         this.scriptStatus = newStatus;
-        console.log(`Updating status: ${JSON.stringify(this.props["Page Name"]?.rich_text[0]?.text?.content)} -> ${this.scriptStatus.name}`)
       }
     }
 
-    async updateEntryPage(){
+    async updateScriptEntry(){
+      // console.log(`[${this.scriptId}] ${this.enabledStatus.name}`)
         if(this.enabledStatus.id == ScriptEnabledStatus.DISABLED.id){
-          await this.stopScript(ScriptStatus.DISABLED);
+          this.updateStatus(ScriptStatus.DISABLED);
+          this.stopScript();
         }
         await this.notion.updatePage(this.entry.id, this.getProps())
         // console.log(`Updating Entry: ${JSON.stringify(this.props["Page Name"]?.rich_text[0]?.text)} (Status: ${this.scriptStatus.name})`)
     }
   
-    async updateEntry(newEntry=null){
+    updateProps(newEntry=null){
       if(newEntry != null){
         this.entry = newEntry;
-        this.props = this.entry.props;
+        this.props = newEntry.properties;
         this.enabledStatus = this.parseEnabledStatus(this.props["Enabled?"])
       }
     }

@@ -29,50 +29,28 @@ module.exports = class NotionLinkUpdater {
         this.params = params;
         this.databaseId = this.params.databaseId;
         this.columnsSchema = this.params.columns;
-        this.refreshTime = params['refreshTime'];
         this.entries = [];
-        this.entriesUpdater = null;
         //     setInterval((databaseId) => getEntriesFromNotionDatabase(databaseId), 50000)
         //     updateUnprocessedEntries(databaseId)
         //     setInterval((databaseId) => updateUnprocessedEntries(databaseId), 3000)
     }
 
-    start() {
-        this.update(true)
-    }
-
-    stop() {
-        if (this.entriesUpdater != null){
-            clearTimeout(this.entriesUpdater)
-        }
-    }
-    
-
-    update(loop = false) {
-        this.scriptHelper.updateStatus(ScriptStatus.RUNNING);
-        this.entries = this.notion.getDBEntries(this.databaseId)
-            .then(async (pages) => {
-                this.entries = pages.map((page) => this.processPage(page))
-                        .filter((p) => {
-                            return !p.status;
-                            // try {
-                            //     return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
-                            //     // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
-                            // } catch (error) {
-                            //     this.scriptHelper.throwError("ERROR filtering pages!", error)
-                            //     console.log("ERROR filtering pages!", error)
-                            //     return false;
-                            // }
-                        })
-                        .map(async (entry) => await this.updateEntry(entry))
-                await this.scriptHelper.updateEntryPage();
-                if (loop) {
-                    this.entriesUpdater = setTimeout(() => this.update(true), this.refreshTime)
-                }
-                else{
-                    this.scriptHelper.updateStatus(ScriptStatus.STOPPED);
-                }
-            });
+    async update() {
+        this.entries = await this.notion.getDBEntries(this.databaseId)
+        this.entries = this.entries
+        .map((page) => this.processPage(page))
+        .filter((p) => {
+            return !p.status;
+            // try {
+            //     return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
+            //     // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
+            // } catch (error) {
+            //     this.scriptHelper.throwError("ERROR filtering pages!", error)
+            //     console.log("ERROR filtering pages!", error)
+            //     return false;
+            // }
+        })
+        .map(async (entry) => await this.processUrlEntry(entry))
     }
 
     processPage(page) {
@@ -119,7 +97,7 @@ module.exports = class NotionLinkUpdater {
         }
     }
 
-    async updateEntry(entry) {
+    async processUrlEntry(entry) {
         const blocks = await this.notion.retrievePageBlocks(entry.page.id)
         var urls = blocks;
         if (entry.link.url && entry.link.url !== "") {
@@ -133,7 +111,7 @@ module.exports = class NotionLinkUpdater {
         for (let [index, url] of urls.entries(urls)) {
             const metadata = await this.metadataHelper.getLinkMetadata(url);
             this.createUpdatePage(entry, metadata, index > 0);
-          }
+        }
     }
 }
 
