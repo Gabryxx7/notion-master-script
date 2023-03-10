@@ -331,7 +331,11 @@ class MetadataHelper {
         try {
             const citation = await Cite.input(url);
             const citationJSON = citation[0];
-            const citationString = new Cite(citation).format('bibtex')
+            const citationObj = new Cite(citation);
+            const bibtexCit = citationObj.format('bibtex')
+            const apaCit = citationObj.format('citation', {
+                template: 'apa'
+              })
             const scihubUrl = `${this.SCIHUB_URL}/${url}`;
             var scihubPdfLink = null;
             try{
@@ -345,13 +349,14 @@ class MetadataHelper {
                 title: citationJSON.title,
                 author: citationJSON.author.map((x) => x.given + " " + x.family),
                 type: "Paper",
-                citation: citationString,
+                bibtexCitation: bibtexCit,
+                APACitation: apaCit,
                 scihubLink: scihubUrl,
                 pdfLink: scihubPdfLink
             }
         }
         catch (error) {
-            this.logger.log(`Error DOI metadata for ${url}: ${error.message}`);
+            this.logger.log(`Error DOI metadata for ${url}: ${error.error}, ${error.message}`);
             return null;
         }
     }
@@ -367,7 +372,7 @@ class MetadataHelper {
             }
         }
         catch (error) {
-            this.logger.log(`Error getting URL metadata for ${url}: ${error.message}`);
+            this.logger.log(`Error getting URL metadata for ${url}: ${error.error}, ${error.message}`);
         };
     }
 

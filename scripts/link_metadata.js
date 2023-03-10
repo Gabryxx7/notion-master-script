@@ -16,7 +16,8 @@ module.exports = class NotionLinkUpdater {
             author: 'Author/Channel',
             link: 'Link',
             type: 'Type',
-            citation: 'Citation',
+            bibtexCitation: 'BibTex Citation',
+            APACitation: 'APA Citation',
             scihubLink: 'Sci-Hub Link',
             pdfLink: 'PDF Link'
         })
@@ -51,7 +52,7 @@ module.exports = class NotionLinkUpdater {
             //     return false;
             // }
         })
-        .map(async (entry) => await this.processUrlEntry(entry))
+        .map(async (entry) => this.processUrlEntry(entry))
     }
 
     processPage(page) {
@@ -81,8 +82,9 @@ module.exports = class NotionLinkUpdater {
             .addSelect(this.columnsSchema.type, metadata.type)
             .addLink(this.columnsSchema.link, metadata.url)
             .addLink(this.columnsSchema.scihubLink, metadata.scihubLink)
-            .addLink(this.columnsSchema.pdfLink, metadata.pdfLink)
-            .addRichText(this.columnsSchema.citation, metadata.citation)
+            .addTextLink(this.columnsSchema.pdfLink, metadata.pdfLink, "PDF")
+            .addRichText(this.columnsSchema.bibtexCitation, metadata.bibtexCitation)
+            .addRichText(this.columnsSchema.APACitation, metadata.APACitation)
             .addCheckbox(this.columnsSchema.status, true)
             .build()
             // this.logger.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
