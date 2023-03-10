@@ -78,7 +78,9 @@ class ScriptHelper {
       try{
         this.logger.log(`*** Instantiating ${this.className} for [${this.scriptId}] ***`)
         var params = this.getParamsJson();
-        var paramsOk = (eval(this.className)).paramsSchema.checkParams(params);
+        this.logger.log(`Params Before ${JSON.stringify(params)}`);
+        params = (eval(this.className)).paramsSchema.checkParams(params);
+        this.logger.log(`Params After ${JSON.stringify(params)}`);
         this.refreshTime = params['refreshTime'] ? params['refreshTime'] : this.refreshTime;
         this.scriptInstance = new (eval(this.className))(this, this.notion, params);
       } catch(error) {

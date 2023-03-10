@@ -243,11 +243,12 @@ class ParamsSchema{
                         }
                     }
                 }
-                if(addedParams.length > 0)
+                if(addedParams.length > 0){
                     console.log(`Added params: ${addedParams}`)
+                }
             }
         }
-        return true;
+        return params;
     }
 }
 
@@ -257,14 +258,13 @@ class Utils {
 
 class MetadataHelper {
 
-    constructor(logger=null){
+    constructor(logger=null, scihubUrl=null){
+        this.SCIHUB_URL = scihubUrl == null ? "https://sci-hub.ru" : scihubUrl;
         if(!logger)
             this.logger = console;
         else
             this.logger = logger;
     }
-
-    SCIHUB_URL = "https://sci-hub.ru";
 
     async getLinkMetadata(url) {
         this.logger.log(`Getting metadata for ${url}`)
@@ -316,7 +316,13 @@ class MetadataHelper {
             pdfUrl = $(element).attr("onclick") ;
         });
         if(pdfUrl){
-            pdfUrl = `${this.SCIHUB_URL}${pdfUrl.replace("location.href=","").replaceAll("'", "")}`;
+            pdfUrl = pdfUrl.replace("location.href=","").replaceAll("'", "")
+            if(pdfUrl.includes("sci-hub.")){
+                pdfUrl = `https://${pdfUrl.replace("//", "")}`;
+            }
+            else{
+                pdfUrl = `${this.SCIHUB_URL}${pdfUrl}`;
+            }
         }
         return pdfUrl
     }

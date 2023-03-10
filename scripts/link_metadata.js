@@ -8,6 +8,7 @@ const { Utils, MetadataHelper, PropsHelper, ParamsSchema, NotionHelper, LINK_SPL
 module.exports = class NotionLinkUpdater {
     static paramsSchema = new ParamsSchema()
         .addParam("databaseId", true)
+        .addParam("scihubUrl", false, null)
         .addParam("columns", false,
         {
             status: 'Script Processed',
@@ -24,9 +25,9 @@ module.exports = class NotionLinkUpdater {
     constructor(scriptHelper, notion, params) {
         this.scriptHelper = scriptHelper;
         this.logger = this.scriptHelper.logger;
-        this.metadataHelper = new MetadataHelper(this.logger);
         this.notion = notion;
         this.params = params;
+        this.metadataHelper = new MetadataHelper(this.logger, this.params.scihubUrl);
         this.databaseId = this.params.databaseId;
         this.columnsSchema = this.params.columns;
         this.entries = [];
