@@ -1,7 +1,10 @@
 
 const axios = require('axios');
+const cheerio = require("cheerio"); 
 const Cite = require('citation-js')
 const sleep = require("timers/promises").setTimeout;
+const urlMetadata = require('url-metadata')
+
 
 const LINK_SPLIT_REGEX = /\n|,|(?=https)|(?=http)/;
 
@@ -254,21 +257,35 @@ class Utils {
 
 class MetadataHelper {
 
+    constructor(logger=null){
+        if(!logger)
+            this.logger = console;
+        else
+            this.logger = logger;
+    }
+
+    SCIHUB_URL = "https://sci-hub.ru";
+
     async getLinkMetadata(url) {
-        console.log(`Getting metadata for ${url}`)
+        this.logger.log(`Getting metadata for ${url}`)
         let data = {};
         let type = "";
-        if (url.toLowerCase().includes("youtu")) {
-            data = await this.getYoutubeMetadata(url);
-            type = "Youtube";
+        try{
+            if (url.toLowerCase().includes("youtu")) {
+                data = await this.getYoutubeMetadata(url);
+                type = "Youtube";
+            }
+            else if (url.toLowerCase().includes("doi")) {
+                data = await this.getDOIMetadata(url)
+                type = "DOI";
+            }
+            else {
+                data = await this.getURLMetadata(url)
+                type = "URL";
+            }
         }
-        else if (url.toLowerCase().includes("doi")) {
-            data = await this.getDOIMetadata(url)
-            type = "DOI";
-        }
-        else {
-            data = await this.getURLMetadata(url)
-            type = "URL";
+        catch(error){
+            this.logger.log(`Error getting metadata for ${url}: ${error.message}`);
         }
         if(!data) return null;
         data['url'] = url;
@@ -287,9 +304,21 @@ class MetadataHelper {
             }
         }
         catch (error) {
-            console.log("Error YouTube metadata");
-            console.error(error);
+            this.logger.log(`Error YouTube metadata ${error.message}`);
         };
+    }
+
+    async getScihubPDFLink(scihubUrl){
+        const pageHTML = await axios.get(scihubUrl);
+        const $ = cheerio.load(pageHTML.data);
+        var pdfUrl = null;
+        $("#buttons button").each((index, element) => { 
+            pdfUrl = $(element).attr("onclick") ;
+        });
+        if(pdfUrl){
+            pdfUrl = `${this.SCIHUB_URL}${pdfUrl.replace("location.href=","").replaceAll("'", "")}`;
+        }
+        return pdfUrl
     }
 
     async getDOIMetadata(url) {
@@ -297,17 +326,26 @@ class MetadataHelper {
             const citation = await Cite.input(url);
             const citationJSON = citation[0];
             const citationString = new Cite(citation).format('bibtex')
+            const scihubUrl = `${this.SCIHUB_URL}/${url}`;
+            var scihubPdfLink = null;
+            try{
+                scihubPdfLink = await this.getScihubPDFLink(scihubUrl)
+            }
+            catch(error){
+                this.logger.log(`Error getting scihub PDF link ${error.message}`)
+            }
+            this.logger.log(`SCIHUB pdf Link for ${scihubUrl}: ${scihubPdfLink}`)
             return {
                 title: citationJSON.title,
                 author: citationJSON.author.map((x) => x.given + " " + x.family),
                 type: "Paper",
                 citation: citationString,
-                pdfLink: `https://sci-hub.ru/${url}`
+                scihubLink: scihubUrl,
+                pdfLink: scihubPdfLink
             }
         }
         catch (error) {
-            console.log("Error DOI metadata " + url);
-            console.error(error);
+            this.logger.log(`Error DOI metadata for ${url}: ${error.message}`);
             return null;
         }
     }
@@ -323,8 +361,7 @@ class MetadataHelper {
             }
         }
         catch (error) {
-            console.log("Error getting URL metadata");
-            console.error(error);
+            this.logger.log(`Error getting URL metadata for ${url}: ${error.message}`);
         };
     }
 

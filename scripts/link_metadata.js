@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 const { Client } = require("@notionhq/client")
 // const config = require('./config.no-commit.json')
-const urlMetadata = require('url-metadata')
 const { Utils, MetadataHelper, PropsHelper, ParamsSchema, NotionHelper, LINK_SPLIT_REGEX } = require('../utils.js')
 
 // const databaseId = config.NOTION_DATABASE_ID
@@ -17,6 +16,7 @@ module.exports = class NotionLinkUpdater {
             link: 'Link',
             type: 'Type',
             citation: 'Citation',
+            scihubLink: 'Sci-Hub Link',
             pdfLink: 'PDF Link'
         })
         .addParam("refreshTime", false, 5000);
@@ -24,7 +24,7 @@ module.exports = class NotionLinkUpdater {
     constructor(scriptHelper, notion, params) {
         this.scriptHelper = scriptHelper;
         this.logger = this.scriptHelper.logger;
-        this.metadataHelper = new MetadataHelper();
+        this.metadataHelper = new MetadataHelper(this.logger);
         this.notion = notion;
         this.params = params;
         this.databaseId = this.params.databaseId;
@@ -79,6 +79,7 @@ module.exports = class NotionLinkUpdater {
             .addMultiSelect(this.columnsSchema.author, authors)
             .addSelect(this.columnsSchema.type, metadata.type)
             .addLink(this.columnsSchema.link, metadata.url)
+            .addLink(this.columnsSchema.scihubLink, metadata.scihubLink)
             .addLink(this.columnsSchema.pdfLink, metadata.pdfLink)
             .addRichText(this.columnsSchema.citation, metadata.citation)
             .addCheckbox(this.columnsSchema.status, true)
@@ -103,15 +104,16 @@ module.exports = class NotionLinkUpdater {
         this.logger.log(`Found new entries to process. Using regex: ${LINK_SPLIT_REGEX}`)
         const blocks = await this.notion.retrievePageBlocks(entry.page.id)
         var urls = blocks;
+        var linksUrls = [];
         try{
-            urls = urls.concat(entry.link.url.split(LINK_SPLIT_REGEX))
-            this.logger.log(`Splitting url: ${entry.link.url.split(LINK_SPLIT_REGEX)}`)
+            linksUrls = entry.link.url.split(LINK_SPLIT_REGEX)
         }
         catch(error){
-
         }
-        urls = urls.concat(entry.title.split(LINK_SPLIT_REGEX))
-        this.logger.log(`Splitting title: ${entry.title.split(LINK_SPLIT_REGEX)}`)
+        if(linksUrls.length <= 0){
+            linksUrls = entry.title.split(LINK_SPLIT_REGEX)
+        }
+        urls = urls.concat(linksUrls)
         urls = urls.filter((x) => x != '');
         this.logger.log(urls)
         if(urls.length <= 0) return;
