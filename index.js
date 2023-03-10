@@ -2,6 +2,7 @@
 const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
 const config = require('./config.no-commit.json')
+var { Logger, cleanLogs } = require("./Logger.js")
 dotenv.config()
 
 const { Utils, PropsHelper, NotionHelper } = require("./utils.js")
@@ -14,11 +15,12 @@ const sleep = require("timers/promises").setTimeout;
 // }
 const notion = new Client({ auth: config.NOTION_KEY })
 
-
+cleanLogs();
 
 class ScriptsManager {
   constructor(notion, scriptsList, masterDatabaseID, columnsSchema, refreshTime) {
     this.notion = new NotionHelper(notion);
+    this.logger = new Logger("ScriptsManager")
     this.masterDatabaseID = masterDatabaseID;
     this.masterDatabaseObj = null;
     this.refreshTime = refreshTime;
@@ -39,34 +41,34 @@ class ScriptsManager {
         return this.startScripts()
       }).then(() =>{
         if(firstInit)
-          console.log("---- Init Completed ---- ")
+          this.logger.log("---- Init Completed ---- ")
         else
-          console.log("---- Master DB Script Manager update ---- ")
+          this.logger.log("---- Master DB Script Manager update ---- ")
           setTimeout(async () => {await this.update()}, this.refreshTime)
       })
   }
   
 
   async startScripts(){
-    console.log("\n**** Starting scripts! ****")
+    this.logger.log("**** Starting scripts! ****")
     for (const [key, scriptEntry] of Object.entries(this.scriptEntries)) {
       scriptEntry.startScript();
       await sleep(500); // This is needed to avoid Error 409 "Conflict while saving", it's caused by Notion internal working. See: https://www.reddit.com/r/Notion/comments/s8uast/error_deleting_all_the_blocks_in_a_page/
-      // console.log("After Wait")
+      // this.logger.log("After Wait")
     }
   }
 
   async updateScriptsOptions() {
-    console.log("\n**** Updating scripts options! ****")
+    this.logger.log("**** Updating scripts options! ****")
     if(!this.masterDatabaseObj){
-      console.error("No master database set! Did you add it to the config.json file? Did you connect the integration with it?")
+      this.logger.error("No master database set! Did you add it to the config.json file? Did you connect the integration with it?")
       return;
     }
     var dbOptions = this.masterDatabaseObj.properties[this.columnsSchema.scriptId].select.options;
     this.availableScripts.map((availableScript) => {
       var isOptionInDb = dbOptions.find((opt) => opt.name == availableScript.name)
       if(isOptionInDb === undefined){
-        console.log(`Option ${availableScript.name} not in DB options, adding it now!`)
+        this.logger.log(`Option ${availableScript.name} not in DB options, adding it now!`)
         // Add the new option through a new empty entry, and delete it immediately on response
         var props = new PropsHelper().addSelect("SCRIPT_ID", availableScript.name).build();
         this.notion.createPage(
@@ -74,7 +76,7 @@ class ScriptsManager {
           this.masterDatabaseObj.id,
           props)
         .then((response) => this.notion.deletePage(response.id))
-        .catch((error) => console.error("Error creating empty page for script options", error))
+        .catch((error) => this.logger.error("Error creating empty page for script options", error))
       }
     })
   }
@@ -84,7 +86,7 @@ class ScriptsManager {
   }
 
   async updateScriptsDb() {
-    console.log("\n**** Updating scripts instances entries! ****")
+    this.logger.log("**** Updating scripts instances entries! ****")
     var dbEntries = await this.notion.getDBEntries(this.masterDatabaseID);
     for (let [index, entry] of dbEntries.entries()) {
       if(!this.scriptEntries.hasOwnProperty(entry.id)){
@@ -98,8 +100,6 @@ class ScriptsManager {
             }
           }
         }
-        console.log(entry.properties[this.columnsSchema.pageLink])
-        console.log(entry.properties[this.columnsSchema.pageLink].rich_text[0].text)
         this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index, scriptClassName, this.masterDatabaseID, this.columnsSchema);
         if(!scriptClassName){
           this.scriptEntries[entry.id].throwError(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`)
@@ -110,13 +110,13 @@ class ScriptsManager {
       await this.scriptEntries[entry.id].updateScriptEntry();
     }
 
-    console.log("\n**** Updating attached DBs metadata ****")
+    this.logger.log("**** Updating attached DBs metadata ****")
     try{
       var response =  await this.notion.getAttachedDBs();
       response.results.map((attachedDb) => {
         if(this.isMasterDatabase(attachedDb)){
           if(this.masterDatabaseObj == null){
-            console.log(`MasterDB Found! ${attachedDb.id}`)
+            this.logger.log(`MasterDB Found! ${attachedDb.id}`)
           }
           this.masterDatabaseObj = attachedDb;
           return;
@@ -128,7 +128,7 @@ class ScriptsManager {
             return;
           }
         }
-        console.log(`Adding new attached DB! ${attachedDb.id}`)
+        this.logger.log(`Adding new attached DB! ${attachedDb.id}`)
         var props = new PropsHelper()
           .addTitle(this.columnsSchema.pageId, attachedDb.id)
           .addRichText(this.columnsSchema.pageName, attachedDb.title[0].plain_text)
@@ -137,11 +137,11 @@ class ScriptsManager {
           .build()
           
         this.notion.createPage(NotionHelper.ParentType.DATABASE, this.masterDatabaseID, props)
-          .then((response) => console.log(`New page created {response.id}`))
-          .catch((error) => console.error("Error creating page for new Attached DB", error))
+          .then((response) => this.logger.log(`New page created {response.id}`))
+          .catch((error) => this.logger.error("Error creating page for new Attached DB", error))
       })  
     }catch(error){
-      console.error("Error retreiving attached DBs", error)
+      this.logger.error("Error retreiving attached DBs", error)
     }
   }
 }

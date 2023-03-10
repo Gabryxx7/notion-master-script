@@ -2,6 +2,7 @@
 const { Utils, MetadataHelper, PropsHelper, ParamsSchema, fmt } = require('./utils.js')
 const { ScriptStatus } = require('./ScriptStatus.js')
 const NotionLinkUpdater = require("./scripts/link_metadata")
+const { Logger } = require("./Logger.js")
 
 
 class ScriptHelper {
@@ -29,6 +30,7 @@ class ScriptHelper {
       } catch (error) {
         this.throwError(`No page/database ID found, does this page/db exist? Was it added manually?`)
       }
+      this.logger = new Logger(this.scriptId)
       this.scriptLoopHandle = null;
     }  
   
@@ -38,14 +40,15 @@ class ScriptHelper {
         msg =`${msg}: ${errorObj.message}`
       }
       this.errorsList.push({msg: msg, errorObj: errorObj});
-      console.error(`[${this.scriptId}] msg`)
-      // console.error(msg, errorObj)
+      if(this.logger){
+        this.logger.error(msg)
+      }
     }
     
   
     flushErrors() {
         var ret = this.errorsList.length > 0 ? this.errorsList.map((x) => x.msg).join("\n> ") : "";
-        // console.log(`\n**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
+        // this.logger.log(`**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
         this.errorsList = [];
         return ret;
     }
@@ -54,9 +57,9 @@ class ScriptHelper {
       var jsonParams = {}
       try{
         var paramsStr = `${this.props[this.columnsSchema.scriptParams].rich_text[0].plain_text.toString('utf8')}`;
-        // console.log("\n", paramsStr, "\n")
+        // this.logger.log("", paramsStr, "\n")
         paramsStr = paramsStr.replaceAll(/“|”/g, '"');
-        // console.log("\n", paramsStr, "\n")
+        // this.logger.log("", paramsStr, "\n")
         try{
           jsonParams = JSON.parse(paramsStr, 'utf8');
         } catch(error){
@@ -73,7 +76,7 @@ class ScriptHelper {
   
     createScriptInstance() {
       try{
-        console.log(`\n*** Instantiating ${this.className} for [${this.scriptId}] ***`)
+        this.logger.log(`*** Instantiating ${this.className} for [${this.scriptId}] ***`)
         var params = this.getParamsJson();
         var paramsOk = (eval(this.className)).paramsSchema.checkParams(params);
         this.refreshTime = params['refreshTime'] ? params['refreshTime'] : this.refreshTime;
@@ -110,17 +113,17 @@ class ScriptHelper {
 
     update(){
       if(this.shouldStop()){
-        console.log(`[${this.scriptId}] Stopping: ${this.scriptStatus.name}`);
+        this.logger.log(`Stopping: ${this.scriptStatus.name}`);
         (async () => {this.updateScriptEntry()})();
         return;
       }
       this.updateStatus(ScriptStatus.RUNNING);
-      console.log(`[${this.scriptId}] ${fmt(new Date())} Update`)
+      // this.logger.log(`Update`)
       this.scriptInstance.update();
       this.notion.getUpdatedDBEntry(this.masterDatabaseID, this.columnsSchema.pageId, this.databaseId)
         .then((res) => {
-          // console.log(`[${this.scriptId}] Updated db entry : ${res.results.length}`)
-          // console.log(res.results[0])
+          // this.logger.log(`Updated db entry : ${res.results.length}`)
+          // this.logger.log(res.results[0])
           this.updateProps(res.results[0]);
           this.updateScriptEntry()
             .then(() => setTimeout(() => this.update(), this.refreshTime))
@@ -139,7 +142,7 @@ class ScriptHelper {
   
     updateStatus(newStatus){
       if(this.scriptStatus.id != newStatus.id){
-        console.log(`[${this.scriptId}] Updating status: ${this.scriptStatus.name} -> ${newStatus.name}`)
+        this.logger.log(`Updating status: ${this.scriptStatus.name} -> ${newStatus.name}`)
         this.scriptStatus = newStatus;
       }
     }
@@ -151,8 +154,13 @@ class ScriptHelper {
       if(this.shouldStop()){
         this.stopScript();
       }
-      await this.notion.updatePage(this.entry.id, this.getProps())
-      // console.log(`Updating Entry: ${JSON.stringify(this.props["Page Name"]?.rich_text[0]?.text)} (Status: ${this.scriptStatus.name})`)
+      try{
+        await this.notion.updatePage(this.entry.id, this.getProps())
+      }
+      catch(error){
+        this.logger.log(`Error updating page ${this.entry.id}: ${error.message}`);
+      }
+      // this.logger.log(`Updating Entry: ${JSON.stringify(this.props["Page Name"]?.rich_text[0]?.text)} (Status: ${this.scriptStatus.name})`)
     }
   
     updateProps(newEntry=null){

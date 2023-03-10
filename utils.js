@@ -3,6 +3,8 @@ const axios = require('axios');
 const Cite = require('citation-js')
 const sleep = require("timers/promises").setTimeout;
 
+const LINK_SPLIT_REGEX = /\n|,|(?=https)|(?=http)/;
+
 function fmt(date, format = 'YYYY-MM-DD hh:mm:ss') {
     const pad2 = (n) => n.toString().padStart(2, '0');
   
@@ -156,7 +158,7 @@ class NotionHelper{
             await sleep(250)
             try{
                 for(var blockText of blockData.paragraph.text){
-                    var urls = blockText.plain_text.split(/\n|,/);
+                    var urls = blockText.plain_text.split(LINK_SPLIT_REGEX);
                     blocks = blocks.concat(urls)
                 }
             }
@@ -328,7 +330,7 @@ class MetadataHelper {
 
 }
 
-module.exports = { PropsHelper, NotionHelper, ParamsSchema, Utils, MetadataHelper, fmt };
+module.exports = { PropsHelper, NotionHelper, ParamsSchema, Utils, MetadataHelper, fmt, LINK_SPLIT_REGEX };
 
 // config.NOTION_DATABASE_IDs.forEach((databaseId) =>
 //   {

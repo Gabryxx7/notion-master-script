@@ -2,7 +2,7 @@
 const { Client } = require("@notionhq/client")
 // const config = require('./config.no-commit.json')
 const urlMetadata = require('url-metadata')
-const { Utils, MetadataHelper, PropsHelper, ParamsSchema, NotionHelper } = require('../utils.js')
+const { Utils, MetadataHelper, PropsHelper, ParamsSchema, NotionHelper, LINK_SPLIT_REGEX } = require('../utils.js')
 
 // const databaseId = config.NOTION_DATABASE_ID
 
@@ -23,6 +23,7 @@ module.exports = class NotionLinkUpdater {
     // Name: Needed?
     constructor(scriptHelper, notion, params) {
         this.scriptHelper = scriptHelper;
+        this.logger = this.scriptHelper.logger;
         this.metadataHelper = new MetadataHelper();
         this.notion = notion;
         this.params = params;
@@ -42,10 +43,10 @@ module.exports = class NotionLinkUpdater {
             return !p.status;
             // try {
             //     return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
-            //     // console.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
+            //     // this.logger.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
             // } catch (error) {
             //     this.scriptHelper.throwError("ERROR filtering pages!", error)
-            //     console.log("ERROR filtering pages!", error)
+            //     this.logger.log("ERROR filtering pages!", error)
             //     return false;
             // }
         })
@@ -59,7 +60,7 @@ module.exports = class NotionLinkUpdater {
             page.properties[this.columnsSchema.title].title.map(({ plain_text }) => plain_text).join("") : null;
         const link =  this.columnsSchema.link in page.properties ? page.properties[this.columnsSchema.link] : null;
         const author =  this.columnsSchema.author in page.properties ? page.properties[this.columnsSchema.author].multi_select : null;
-        // console.log(`Link ${link}`);
+        // this.logger.log(`Link ${link}`);
         const newPage = {
             page: page,
             status,
@@ -82,29 +83,37 @@ module.exports = class NotionLinkUpdater {
             .addRichText(this.columnsSchema.citation, metadata.citation)
             .addCheckbox(this.columnsSchema.status, true)
             .build()
-            // console.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
+            // this.logger.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
         if(createNew){
             this.notion.createPage(
                 NotionHelper.ParentType.DATABASE,
                 this.databaseId,
                 props)
-            .catch((error) => { console.log("Error creating page!", error.message) })
+            .catch((error) => { this.logger.error("Error creating page!", error.message) })
+            .then(() => {this.logger.log(`Created new page for: ${metadata.url} (${metadata.title})`)})
         }
         else{
             this.notion.updatePage(entry.page.id,props)
-                .catch((error) => { console.log("Error updating page!", error.message) })
+                .catch((error) => { this.logger.error("Error updating page!", error.message) })
+                .then(() => {this.logger.log(`Updated page for: ${metadata.url} (${metadata.title})`)})
         }
     }
 
     async processUrlEntry(entry) {
+        this.logger.log(`Found new entries to process. Using regex: ${LINK_SPLIT_REGEX}`)
         const blocks = await this.notion.retrievePageBlocks(entry.page.id)
         var urls = blocks;
-        if (entry.link.url && entry.link.url !== "") {
-            urls = urls.concat(entry.link.url.split(/\n|,/))
+        try{
+            urls = urls.concat(entry.link.url.split(LINK_SPLIT_REGEX))
+            this.logger.log(`Splitting url: ${entry.link.url.split(LINK_SPLIT_REGEX)}`)
         }
-        urls = urls.concat(entry.title.split(/\n|,/))
+        catch(error){
+
+        }
+        urls = urls.concat(entry.title.split(LINK_SPLIT_REGEX))
+        this.logger.log(`Splitting title: ${entry.title.split(LINK_SPLIT_REGEX)}`)
         urls = urls.filter((x) => x != '');
-        console.log(urls)
+        this.logger.log(urls)
         if(urls.length <= 0) return;
 
         for (let [index, url] of urls.entries(urls)) {
