@@ -1,25 +1,20 @@
 #!/usr/bin/env node
-const { Client } = require("@notionhq/client")
 const dotenv = require("dotenv")
-const config = require('./config.no-commit.json')
-var { Logger, cleanLogs } = require("./Logger.js")
 dotenv.config()
-
-const { Utils, PropsHelper, NotionHelper } = require("./utils.js")
-const { ScriptHelper } = require("./ScriptHelper.js")
+const config = require('./config.no-commit.json')
 const sleep = require("timers/promises").setTimeout;
 
+const { NotionHelper } = require("./Helpers/NotionHelper.js")
+const { PropsHelper } = require("./Helpers/PropsHelper.js")
+const { ScriptHelper } = require("./Helpers/ScriptHelper.js")
+var { Logger, cleanLogs } = require("./Helpers/Logger.js")
 
-// for(let key in config.availableScripts){
-//   eval(`const ${config.AVAILABLE_SCRIPTS[key].className} = require('${config.AVAILABLE_SCRIPTS[key].path}')`)
-// }
-const notion = new Client({ auth: config.NOTION_KEY })
 
 cleanLogs();
 
 class ScriptsManager {
-  constructor(notion, scriptsList, masterDatabaseID, columnsSchema, refreshTime) {
-    this.notion = new NotionHelper(notion);
+  constructor(scriptsList, masterDatabaseID, columnsSchema, refreshTime) {
+    this.notion = new NotionHelper(config.NOTION_KEY);
     this.logger = new Logger("ScriptsManager")
     this.masterDatabaseID = masterDatabaseID;
     this.masterDatabaseObj = null;
@@ -27,7 +22,7 @@ class ScriptsManager {
     this.columnsSchema = columnsSchema;
     this.availableScripts = scriptsList;
     for(let key in this.availableScripts){
-      this.availableScripts[key]['class'] = require(this.availableScripts[key].path)
+      this.availableScripts[key]['class'] = (eval(`require('${this.availableScripts[key].path}').${this.availableScripts[key].className}`))
     }
     this.scriptEntries = {}
     this.attachedDatabases = []
@@ -52,7 +47,7 @@ class ScriptsManager {
   async startScripts(){
     this.logger.log("**** Starting scripts! ****")
     for (const [key, scriptEntry] of Object.entries(this.scriptEntries)) {
-      scriptEntry.startScript();
+      await scriptEntry.startScript();
       await sleep(500); // This is needed to avoid Error 409 "Conflict while saving", it's caused by Notion internal working. See: https://www.reddit.com/r/Notion/comments/s8uast/error_deleting_all_the_blocks_in_a_page/
       // this.logger.log("After Wait")
     }
@@ -71,12 +66,9 @@ class ScriptsManager {
         this.logger.log(`Option ${availableScript.name} not in DB options, adding it now!`)
         // Add the new option through a new empty entry, and delete it immediately on response
         var props = new PropsHelper().addSelect("SCRIPT_ID", availableScript.name).build();
-        this.notion.createPage(
-          NotionHelper.ParentType.DATABASE,
-          this.masterDatabaseObj.id,
-          props)
-        .then((response) => this.notion.deletePage(response.id))
-        .catch((error) => this.logger.error("Error creating empty page for script options", error))
+        this.notion.createPageInDb( this.masterDatabaseObj.id, props)
+          .then((response) => this.notion.deletePage(response.id))
+          .catch((error) => this.logger.error("Error creating empty page for script options", error))
       }
     })
   }
@@ -91,17 +83,18 @@ class ScriptsManager {
     for (let [index, entry] of dbEntries.entries()) {
       if(!this.scriptEntries.hasOwnProperty(entry.id)){
         var scriptName = entry.properties[this.columnsSchema.scriptId]?.select?.name;
-        var scriptClassName = null;
+        var scriptData = null;
         if(scriptName){
-          for (let script of config.AVAILABLE_SCRIPTS) {
+          for (let script of this.availableScripts) {
+            // var script = this.availableScripts[key];
             if (script.name == scriptName) {
-              scriptClassName = script.className;
+              scriptData = script;
               break;
             }
           }
         }
-        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, index, scriptClassName, this.masterDatabaseID, this.columnsSchema);
-        if(!scriptClassName){
+        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, scriptData, this.masterDatabaseID, this.columnsSchema);
+        if(!scriptData){
           this.scriptEntries[entry.id].throwError(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`)
         }
       } else{
@@ -129,14 +122,15 @@ class ScriptsManager {
           }
         }
         this.logger.log(`Adding new attached DB! ${attachedDb.id}`)
+        var dbTitle = attachedDb.title[0].plain_text;
         var props = new PropsHelper()
           .addTitle(this.columnsSchema.pageId, attachedDb.id)
-          .addRichText(this.columnsSchema.pageName, attachedDb.title[0].plain_text)
-          .addTextLink(this.columnsSchema.pageLink, attachedDb.url, attachedDb.title[0].plain_text)
+          .addRichText(this.columnsSchema.pageName, dbTitle)
+          .addLink(this.columnsSchema.pageLink, attachedDb.url, true, dbTitle)
           .addSelect(this.columnsSchema.scriptId, "NONE")
           .build()
           
-        this.notion.createPage(NotionHelper.ParentType.DATABASE, this.masterDatabaseID, props)
+        this.notion.createPageInDb(this.masterDatabaseID, props)
           .then((response) => this.logger.log(`New page created {response.id}`))
           .catch((error) => this.logger.error("Error creating page for new Attached DB", error))
       })  
@@ -146,7 +140,7 @@ class ScriptsManager {
   }
 }
 
-const scriptsManager = new ScriptsManager(notion, config.AVAILABLE_SCRIPTS, config.NOTION_SCRIPTS_DATABASE_ID, config.COLUMNS_SCHEMA, config.SCRIPT_DB_REFRESH_TIME);
+const scriptsManager = new ScriptsManager(config.AVAILABLE_SCRIPTS, config.NOTION_SCRIPTS_DATABASE_ID, config.COLUMNS_SCHEMA, config.SCRIPT_DB_REFRESH_TIME);
 (async () => {
   await scriptsManager.update(true);
 })()

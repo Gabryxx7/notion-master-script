@@ -1,0 +1,33 @@
+[
+    {
+        "heading_1": {
+            "rich_text": [
+                {
+                    "text": {
+                        "content": "Script Parameters"
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "code":{
+            "caption": [
+                {
+                    "type": "text",
+                    "text": {
+                        "content": "params_json"
+                    }
+                }
+            ],
+            "language": "json",
+            "text": [
+                {
+                    "text": {
+                        "content": "CODE"
+                    }
+                }
+            ]
+        }
+    }
+]

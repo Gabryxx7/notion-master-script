@@ -1,4 +1,4 @@
-const { fmt } = require('./utils.js')
+const fmt = require('./Utils.js').Utils.fmt
 var fs = require('fs');
 var util = require('util');
 
@@ -12,7 +12,7 @@ const cleanLogs = function(){
 class Logger {
     constructor(tag) {
         this.filename = tag.replaceAll(" ", "_");
-        this.logFile = fs.createWriteStream(`${LOGS_FOLDER}/${this.filename}.txt`, { flags: `${CLEAN_LOGS ? 'w' : 'a'}` });
+        this.logFile = fs.createWriteStream(`${LOGS_FOLDER}/${this.filename}.log`, { flags: `${CLEAN_LOGS ? 'w' : 'a'}` });
           // Or 'w' to truncate the file every time the process starts.
         this.logStdout = process.stdout;
         this.tag = tag;

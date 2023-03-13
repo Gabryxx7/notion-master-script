@@ -1,4 +1,29 @@
 {
   "NOTION_KEY": "secret_blabla",
-  "NOTION_DATABASE_ID": "asfagdsagsdgadsgasd"
+  "NOTION_DATABASE_ID": "asfagdsagsdgadsgasd",
+  "SCRIPT_DB_REFRESH_TIME": 10000,
+  "COLUMNS_SCHEMA": {
+    "enabledStatus": "Enabled?",
+    "runningStatus": "Status",
+    "errors": "Errors",
+    "scriptParams": "Script Parameters",
+    "scriptId": "SCRIPT_ID",
+    "pageName": "Page Name",
+    "pageLink": "Page Link",
+    "pageId": "Page ID"
+  },
+  "AVAILABLE_SCRIPTS":[
+    {
+      "name": "notion-link-metadata",
+      "description": "Given a URL, a YouTube link or even a DOI, it fetches the metadata and updates the database entry",
+      "path": "./scripts/link_metadata.js",
+      "className": "NotionLinkUpdater"
+    },
+    {
+      "name": "Example Script",
+      "description": "This is a simple script that just sends a notification to your phone through PushBullet whenever a page gets updated",
+      "path": "./scripts/page_update_notif.js",
+      "className": "PageObserver"
+    }
+  ]
 }

@@ -1,5 +1,5 @@
 [Unit]
-Description=Notion Metadata Plugin
+Description=Notion Master Script Service
 
 [Service]
 ExecStart=/home/gabryxx7/repos/notion-link-metadata/index.js
