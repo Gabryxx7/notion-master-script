@@ -60,7 +60,7 @@ class ScriptHelper {
     return ret;
   }
 
-  getParamsCodeBlock(blocks, caption="params_json") {
+  getParamsCodeBlock(blocks, caption="params") {
     if (blocks.length <= 0)
       return null;
     for(var i = 0; i < blocks.length; i++) {
@@ -79,18 +79,20 @@ class ScriptHelper {
   async getParamsJson() {
     var codeBlock = null;
     try {
+      const paramsCaption = `params_${this.scriptData.name}`;
       var blocks = await this.notion.retrievePageBlocks(this.entry.id);
       blocks = blocks.results;
       // fsPromises.writeFile(`./logs/${this.pageName}_Blocks.json`, JSON.stringify(blocks))
-      codeBlock = this.getParamsCodeBlock(blocks);
+      codeBlock = this.getParamsCodeBlock(blocks, paramsCaption);
       // fsPromises.writeFile(`./logs/${this.pageName}_ParamsBlock.json`, JSON.stringify(codeBlock))
       if(!codeBlock){
         var defBlockList = require("./defaultScriptPage.json");
         defBlockList[1].code.text[0].text.content = this.scriptData.class.paramsSchema.toString();
+        defBlockList[1].code.caption[0].text.content = paramsCaption;
         var addedBlocks = await this.notion.appendBlocks(this.entry.id, defBlockList);
         addedBlocks = addedBlocks.results[0];
         // fsPromises.writeFile(`./logs/${this.pageName}_AddedBlocks.json`, JSON.stringify(addedBlocks))
-        codeBlock = this.getParamsCodeBlock(addedBlocks);
+        codeBlock = this.getParamsCodeBlock(addedBlocks, paramsCaption);
         // fsPromises.writeFile(`./logs/${this.pageName}_ParamsAddedBlock.json`, JSON.stringify(codeBlock))
       }
       var paramBlockLink = `https://www.notion.so/gabryxx7/${this.databaseId}-${codeBlock.parent.page_id.replaceAll("-", "")}#${codeBlock.id.replaceAll("-", "")}`;

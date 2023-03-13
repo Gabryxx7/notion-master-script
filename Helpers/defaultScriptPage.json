@@ -16,7 +16,7 @@
                 {
                     "type": "text",
                     "text": {
-                        "content": "params_json"
+                        "content": "params"
                     }
                 }
             ],
