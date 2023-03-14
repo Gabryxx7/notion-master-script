@@ -6,10 +6,9 @@
     "enabledStatus": "Enabled?",
     "runningStatus": "Status",
     "errors": "Errors",
-    "scriptParams": "Script Parameters",
+    "scriptParams": "Parameters",
     "scriptId": "SCRIPT_ID",
-    "pageName": "Page Name",
-    "pageLink": "Page Link",
+    "pageName": "Page",
     "pageId": "Page ID"
   },
   "AVAILABLE_SCRIPTS":[

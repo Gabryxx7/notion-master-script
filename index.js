@@ -14,7 +14,7 @@ cleanLogs();
 
 class ScriptsManager {
   constructor(scriptsList, masterDatabaseID, columnsSchema, refreshTime) {
-    this.notion = new NotionHelper(config.NOTION_KEY);
+    this.notionHelper = new NotionHelper(config.NOTION_KEY);
     this.logger = new Logger("ScriptsManager")
     this.masterDatabaseID = masterDatabaseID;
     this.masterDatabaseObj = null;
@@ -43,6 +43,9 @@ class ScriptsManager {
       })
   }
   
+  async getScriptPage(pageId){
+    return this.notionHelper.getSingleDbEntry(this.masterDatabaseID, this.columnsSchema.pageId, pageId)
+  }
 
   async startScripts(){
     this.logger.log("**** Starting scripts! ****")
@@ -66,8 +69,8 @@ class ScriptsManager {
         this.logger.log(`Option ${availableScript.name} not in DB options, adding it now!`)
         // Add the new option through a new empty entry, and delete it immediately on response
         var props = new PropsHelper().addSelect("SCRIPT_ID", availableScript.name).build();
-        this.notion.createPageInDb( this.masterDatabaseObj.id, props)
-          .then((response) => this.notion.deletePage(response.id))
+        this.notionHelper.createPageInDb( this.masterDatabaseObj.id, props)
+          .then((response) => this.notionHelper.deletePage(response.id))
           .catch((error) => this.logger.error("Error creating empty page for script options", error))
       }
     })
@@ -78,22 +81,17 @@ class ScriptsManager {
   }
 
   async updateScriptsDb() {
-    this.logger.log("**** Updating scripts instances entries! ****")
-    var dbEntries = await this.notion.getDBEntries(this.masterDatabaseID);
+    this.logger.log("**** Updating scripts entries! ****")
+    var dbEntries = await this.notionHelper.getDBEntries(this.masterDatabaseID);
     for (let [index, entry] of dbEntries.entries()) {
       if(!this.scriptEntries.hasOwnProperty(entry.id)){
         var scriptName = entry.properties[this.columnsSchema.scriptId]?.select?.name;
-        var scriptData = null;
-        if(scriptName){
-          for (let script of this.availableScripts) {
-            // var script = this.availableScripts[key];
-            if (script.name == scriptName) {
-              scriptData = script;
-              break;
-            }
+        for (let script of this.availableScripts) {
+          if (script.name == scriptName) {
+            this.scriptEntries[entry.id] = new ScriptHelper(this, entry, script, this.masterDatabaseID, this.columnsSchema);
+            break;
           }
         }
-        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, scriptData, this.masterDatabaseID, this.columnsSchema);
         if(!scriptData){
           this.scriptEntries[entry.id].throwError(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`)
         }
@@ -105,7 +103,7 @@ class ScriptsManager {
 
     this.logger.log("**** Updating attached DBs metadata ****")
     try{
-      var response =  await this.notion.getAttachedDBs();
+      var response =  await this.notionHelper.getAttachedDBs();
       response.results.map((attachedDb) => {
         if(this.isMasterDatabase(attachedDb)){
           if(this.masterDatabaseObj == null){
@@ -124,13 +122,13 @@ class ScriptsManager {
         this.logger.log(`Adding new attached DB! ${attachedDb.id}`)
         var dbTitle = attachedDb.title[0].plain_text;
         var props = new PropsHelper()
-          .addTitle(this.columnsSchema.pageId, attachedDb.id)
-          .addRichText(this.columnsSchema.pageName, dbTitle)
+          .addRichText(this.columnsSchema.pageId, attachedDb.id)
+          .addTitle(this.columnsSchema.pageName, dbTitle)
           .addLink(this.columnsSchema.pageLink, attachedDb.url, true, dbTitle)
           .addSelect(this.columnsSchema.scriptId, "NONE")
           .build()
           
-        this.notion.createPageInDb(this.masterDatabaseID, props)
+        this.notionHelper.createPageInDb(this.masterDatabaseID, props)
           .then((response) => this.logger.log(`New page created {response.id}`))
           .catch((error) => this.logger.error("Error creating page for new Attached DB", error))
       })  

@@ -35,6 +35,12 @@ class PropsHelper{
         this.props[propName] = { rich_text: [{text: { content: textContent}}]};
         return this;
     }
+    addText(propName, textContent){
+        if(!this.isPropInDB(propName)) return this;
+        if(!textContent) return this;
+        this.props[propName] = { text: [{text: { content: textContent}}]};
+        return this;
+    }
     getText(propName){
         return this.props[propName]?.rich_text[0]?.plain_text;
     }

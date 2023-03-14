@@ -1,7 +1,8 @@
 
 const { PropsHelper } = require('./PropsHelper')
 // const NotionLinkUpdater = require("../scripts/link_metadata")
-const { Logger } = require("./Logger.js")
+const { Logger } = require("./Logger.js");
+const { Script } = require('vm');
 const fsPromises = require('fs').promises;
 
 const ScriptStatus = {
@@ -14,10 +15,69 @@ const ScriptStatus = {
   ERROR: { "name": "Error", "id": 5 }
 }
 
+const ScriptCodeBlocks = {
+  PARAMS: "Parameters",
+  ERRORS: "ERRORS"
+}
+
+class ScriptPage {
+  static createScriptPage(entryId, notionHelper) {
+    var defaultScriptPage = require("./defaultScriptPage.json");
+    var addedPage = await notionHelper.createPageInPage(entryId, defaultScriptPage.page);
+    addedPage = addedPage.results[0];
+    var titleBlock = defaultScriptPage.page_blocks.title;
+    var paramBlock = defaultScriptPage.page_blocks.parameters;
+    var errorsBlock = defaultScriptPage.page_blocks.errors;
+    var addedBlocks = await notionHelper.appendBlocks(addedPage.id, [titleBlock, paramBlock, errorsBlock])
+
+    // var paramBlockLink = `https://www.notion.so/gabryxx7/${this.databaseId}-${codeBlock.parent.page_id.replaceAll("-", "")}#${codeBlock.id.replaceAll("-", "")}`;
+    // var newProp = new PropsHelper().addLink(this.columnsSchema.scriptParams, paramBlockLink, true, "Parameters")
+    //   await this.notionHelper.updatePage(this.entry.id, newProp.build())
+  }
+  constructor(notionHelper, scriptPage) {
+    this.notionHelper = notionHelper;
+    this.scriptPage = scriptPage;
+    this.pageBlocks = null;
+    this.parametersBlock = null;
+    this.errorsBlock = null;
+    this.getPageBlocks()
+  }
+
+  getPageBlocks(){
+    var blocks = (await this.notionHelper.retrievePageBlocks(this.scriptPage.id)).results;
+    for(var i = 0; i < blocks.length; i++) {
+      var block = blocks[i];
+      if (block.code && block.code.caption.length > 0) {
+        var caption = block.code.caption[0].text.content;
+        if(caption.includes(ScriptCodeBlocks.PARAMS)){
+          this.parametersBlock = block;
+        }
+        else if(caption.includes(ScriptCodeBlocks.ERRORS)){
+          this.errorsBlock = block;
+        }
+      }
+    }
+  }
+
+  getParameters(){
+    var jsonParams = JSON.parse(this.parametersBlock.code.text[0].plain_text);
+    // fsPromises.writeFile(`./logs/${this.pageName}_Params_PRE.json`, JSON.stringify(jsonParams))
+    jsonParams['databaseId'] = this.databaseId.replaceAll("-", "");
+    return jsonParams;
+  }
+
+  updateErrors(errorsStr){
+    var props = new PropsHelper().addText("code", errorsStr).build();
+    await this.notion.updateBlock(this.errorsBlock.id, props);
+  }
+
+}
+
 class ScriptHelper {
-  constructor(notion, entry, scriptData, masterDatabaseID, columnsSchema) {
-    this.notion = notion;
-    this.masterDatabaseID = masterDatabaseID;
+  constructor(scriptsManager, entry, scriptData, columnsSchema) {
+    this.scriptsManager = scriptsManager;
+    this.notionHelper = scriptsManager.notionHelper;
+    this.scriptPage = null;
     this.errorsList = []
     this.entry = entry;
     this.columnsSchema = columnsSchema;
@@ -27,13 +87,13 @@ class ScriptHelper {
     this.scriptStatus = ScriptStatus.NONE;
     this.enabledStatus = this.props.getCheckbox(this.columnsSchema.enabledStatus);
     this.scriptInstance = null;
-    this.databaseId = null;
+    this.scriptEntryId = null;
     this.pageName = "none";
     this.refreshTime = 3000;
     this.scriptId = `Entry ${entry.id} `
     try {
-      this.databaseId = this.props.getTitle(this.columnsSchema.pageId);
-      this.pageName = this.props.getText(this.columnsSchema.pageName)
+      this.databaseId = this.props.getText(this.columnsSchema.pageId);
+      this.pageName = this.props.getTitle(this.columnsSchema.pageName)
       this.scriptId = `${this.pageName} (${this.scriptName})`
     } catch (error) {
       this.throwError(`No page/database ID found, does this page/db exist? Was it added manually?`)
@@ -53,68 +113,30 @@ class ScriptHelper {
     }
   }
 
-  flushErrors() {
-    var ret = this.errorsList.length > 0 ? this.errorsList.map((x) => x.msg).join("\n> ") : "";
-    // this.logger.log(`**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
-    this.errorsList = [];
-    return ret;
-  }
-
-  getParamsCodeBlock(blocks, caption="params") {
-    if (blocks.length <= 0)
-      return null;
-    for(var i = 0; i < blocks.length; i++) {
-      var block = blocks[i];
-      if (block.code) {
-        if(block.code.caption.length > 0){
-          if(block.code.caption[0].text.content.includes(caption)){
-            return block;
+  async getScriptPage() {
+    if(this.scriptPage) return this.scriptPage
+    var blocks = (await this.notionHelper.retrievePageBlocks(this.entry.id)).results;
+    if(blocks){
+      for(var i = 0; i < blocks.length; i++) {
+        var block = blocks[i];
+        if(block.hasOwnProperty("child_page")){
+          if(block.child_page.title.includes(this.scriptName)){
+            this.scriptPage = new ScriptPage(block)
+            return this.scriptPage;
           }
         }
       }
     }
-    return null;
-  }
-
-  async getParamsJson() {
-    var codeBlock = null;
-    try {
-      const paramsCaption = `params_${this.scriptData.name}`;
-      var blocks = await this.notion.retrievePageBlocks(this.entry.id);
-      blocks = blocks.results;
-      // fsPromises.writeFile(`./logs/${this.pageName}_Blocks.json`, JSON.stringify(blocks))
-      codeBlock = this.getParamsCodeBlock(blocks, paramsCaption);
-      // fsPromises.writeFile(`./logs/${this.pageName}_ParamsBlock.json`, JSON.stringify(codeBlock))
-      if(!codeBlock){
-        var defBlockList = require("./defaultScriptPage.json");
-        defBlockList[1].code.text[0].text.content = this.scriptData.class.paramsSchema.toString();
-        defBlockList[1].code.caption[0].text.content = paramsCaption;
-        var addedBlocks = await this.notion.appendBlocks(this.entry.id, defBlockList);
-        addedBlocks = addedBlocks.results[0];
-        // fsPromises.writeFile(`./logs/${this.pageName}_AddedBlocks.json`, JSON.stringify(addedBlocks))
-        codeBlock = this.getParamsCodeBlock(addedBlocks, paramsCaption);
-        // fsPromises.writeFile(`./logs/${this.pageName}_ParamsAddedBlock.json`, JSON.stringify(codeBlock))
-      }
-      var paramBlockLink = `https://www.notion.so/gabryxx7/${this.databaseId}-${codeBlock.parent.page_id.replaceAll("-", "")}#${codeBlock.id.replaceAll("-", "")}`;
-      var newProp = new PropsHelper().addLink(this.columnsSchema.scriptParams, paramBlockLink, true, "Parameters")
-      await this.notion.updatePage(this.entry.id, newProp.build())
-    } catch (error) {
-      this.throwError("No parameters found", error)
-    }
-    var jsonParams = JSON.parse(codeBlock.code.text[0].plain_text);
-    // fsPromises.writeFile(`./logs/${this.pageName}_Params_PRE.json`, JSON.stringify(jsonParams))
-    jsonParams['databaseId'] = this.databaseId.replaceAll("-", "");
-    // fsPromises.writeFile(`./logs/${this.pageName}_Params_POST.json`, JSON.stringify(jsonParams))
-    return jsonParams;
+    this.scriptPage = ScriptPage.createScriptPage(this.entry.id)
   }
 
   async createScriptInstance() {
     try {
       this.logger.log(`*** Instantiating ${this.scriptData.className} for [${this.scriptId}] ***`)
-      var params = await this.getParamsJson();
+      var params = await this.scriptPage.getParameters();
       params = this.scriptData.class.paramsSchema.checkParams(params);
       this.refreshTime = params['refreshTime'] ? params['refreshTime'] : this.refreshTime;
-      this.scriptInstance = new this.scriptData.class(this, this.notion, params);
+      this.scriptInstance = new this.scriptData.class(this, this.notionHelper, params);
     } catch (error) {
       this.throwError(`Error instantiating ${this.scriptData.className} for [${this.scriptId}] `, error);
     }
@@ -154,7 +176,7 @@ class ScriptHelper {
     this.updateStatus(ScriptStatus.RUNNING);
     // this.logger.log(`Update`)
     if(this.scriptInstance != null) this.scriptInstance.update();
-    this.notion.getUpdatedDBEntry(this.masterDatabaseID, this.columnsSchema.pageId, this.databaseId)
+    this.notionHelper.getSingleDbEntry(this.masterDatabaseID, this.columnsSchema.pageId, this.databaseId)
       .then(async (res) => {
         // this.logger.log(`Updated db entry : ${res.results.length}`)
         // this.logger.log(res.results[0])
@@ -164,14 +186,6 @@ class ScriptHelper {
           .catch((error) => this.throwError(error))
       })
       .catch((error) => this.throwError(error))
-  }
-
-  getProps() {
-    return new PropsHelper()
-      .addStatus(this.columnsSchema.runningStatus, this.scriptStatus.name)
-      .addCheckbox(this.columnsSchema.enabledStatus, this.enabledStatus)
-      .addRichText(this.columnsSchema.errors, `> ${this.flushErrors()}`)
-      .build()
   }
 
   updateStatus(newStatus) {
@@ -188,11 +202,17 @@ class ScriptHelper {
     if (this.shouldStop()) {
       this.stopScript();
     }
+    this.scriptPage.updateErrors(this.flushErrors());
+    var updatedProps = new PropsHelper()
+      .addStatus(this.columnsSchema.runningStatus, this.scriptStatus.name)
+      .addCheckbox(this.columnsSchema.enabledStatus, this.enabledStatus)
+      // .addRichText(this.columnsSchema.errors, `> ${this.flushErrors()}`)
+      .build()
     try {
-      await this.notion.updatePage(this.entry.id, this.getProps())
+      await this.notionHelper.updatePage(this.entry.id, updatedProps)
     }
     catch (error) {
-      this.logger.log(`Error updating page ${this.entry.id}: ${error.message}\nProps: ${JSON.stringify(this.getProps())}`);
+      this.logger.log(`Error updating page ${this.entry.id}: ${error.message}\nProps: ${JSON.stringify(updatedProps)}`);
     }
   }
 

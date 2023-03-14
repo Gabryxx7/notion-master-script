@@ -1,33 +1,60 @@
-[
-    {
-        "heading_1": {
-            "rich_text": [
-                {
-                    "text": {
-                        "content": "Script Parameters"
-                    }
-                }
-            ]
+{
+    "page": {
+        "child_page": {
+            "title": "Script_ID"
         }
     },
-    {
-        "code":{
-            "caption": [
-                {
-                    "type": "text",
-                    "text": {
-                        "content": "params"
+    "blocks": {
+        "title": {
+            "heading_1": {
+                "rich_text": [
+                    {
+                        "text": {
+                            "content": "Script_ID"
+                        }
                     }
-                }
-            ],
-            "language": "json",
-            "text": [
-                {
-                    "text": {
-                        "content": "CODE"
+                ]
+            }
+        },
+        "parameters":{
+            "code":{
+                "caption": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "Parameters"
+                        }
                     }
-                }
-            ]
+                ],
+                "language": "json",
+                "text": [
+                    {
+                        "text": {
+                            "content": "CODE"
+                        }
+                    }
+                ]
+            }
+        },
+        "errors":{
+            "code":{
+                "caption": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": "Errors"
+                        }
+                    }
+                ],
+                "language": "javascript",
+                "text": [
+                    {
+                        "text": {
+                            "content": "ERRORS"
+                        }
+                    }
+                ]
+            }
         }
     }
-]
+}

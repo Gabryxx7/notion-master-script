@@ -4,38 +4,20 @@ const { Client } = require("@notionhq/client")
 
 class NotionHelper{
     static ParentType = {
-        DATABASE: {field_name: 'database_id'}
+        DATABASE:  'database_id',
+        PAGE:  'page_id'
     }
     constructor(NOTION_KEY){
         this.notion = new Client({ auth: NOTION_KEY })
     }
 
-
-        // var res = {};
-        // (async () => {
-        // const databaseId = '115ed0a663464617b95cea9edf71d34a';
-        // const idFieldName = 'Page ID';
-        // const attachedDBId = 'ae32ca24-0afd-4cb0-8445-972f4e01139f';
-        // const response = await notion.databases.query({
-        //     database_id: databaseId,
-        //     filter: {
-        //     property: idFieldName,
-        //     rich_text: {
-        //         contains: attachedDBId
-        //     }
-        // }
-        // });
-        // res = response;
-        // console.log(response);
-        // })();
-
-    async getUpdatedDBEntry(masterDbId, idFieldName, attachedDbId){
+    async getSingleDbEntry(masterDbId, idFieldName, pageId){
         return this.notion.databases.query({
             database_id: masterDbId,
             filter: {
                 property: idFieldName,
                 rich_text: {
-                    contains: attachedDbId
+                    contains: pageId
                 }
             }
         });
@@ -79,6 +61,11 @@ class NotionHelper{
         })
     }
 
+    updateBlock(bId, propsToUpdate){
+        propsToUpdate['block_id'] = bId;
+        return this.notion.blocks.children.update(propsToUpdate);
+    }
+
     retrieveBlock(bId){
         return this.notion.blocks.retrieve({
             block_id: bId
@@ -90,6 +77,17 @@ class NotionHelper{
             page_id: pId,
             properties: props
         });
+    }
+
+    createPageInPage(pId, props){
+        const pType = NotionHelper.ParentType.PAGE;
+        var parentData = { type: pType }
+        parentData[pType] = dbId;
+        return this.notion.pages.create({
+                parent: parentData,
+                properties: props
+            })
+
     }
 
     createPageInDb(dbId, props){
