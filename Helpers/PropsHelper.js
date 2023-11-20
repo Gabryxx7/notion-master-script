@@ -49,6 +49,7 @@ class PropsHelper{
     }
     addMultiSelect(propName, namesList){
         if(!this.isPropInDB(propName)) return this;
+        if(!namesList) return this;
         this.props[propName] = { multi_select: namesList}
         return this;
     }

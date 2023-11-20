@@ -107,3 +107,5 @@ dist
 *no-commit*
 *.no-commit
 .no-commit*
+*/package-lock.json
+package-lock.json

@@ -15,13 +15,15 @@ const ScriptStatus = {
 }
 
 class ScriptHelper {
-  constructor(notion, entry, scriptData, masterDatabaseID, columnsSchema) {
+  constructor(notion, entry, scriptData, masterDatabaseID, columnsSchema, parsedProps=null) {
     this.notion = notion;
     this.masterDatabaseID = masterDatabaseID;
     this.errorsList = []
     this.entry = entry;
+    this.scriptId = `Entry ${entry.id} `
+    this.logger = new Logger(this.scriptId)
     this.columnsSchema = columnsSchema;
-    this.props = new PropsHelper(entry.properties);
+    this.props = parsedProps ?? new PropsHelper(entry.properties);
     this.scriptName = this.props.getSelect(this.columnsSchema.scriptId);
     this.scriptData = scriptData;
     this.scriptStatus = ScriptStatus.NONE;
@@ -30,15 +32,15 @@ class ScriptHelper {
     this.databaseId = null;
     this.pageName = "none";
     this.refreshTime = 3000;
-    this.scriptId = `Entry ${entry.id} `
-    try {
-      this.databaseId = this.props.getTitle(this.columnsSchema.pageId);
-      this.pageName = this.props.getText(this.columnsSchema.pageName)
-      this.scriptId = `${this.pageName} (${this.scriptName})`
-    } catch (error) {
-      this.throwError(`No page/database ID found, does this page/db exist? Was it added manually?`)
+    if(this.enabledStatus){
+      try {
+        this.databaseId = this.props.getTitle(this.columnsSchema.pageId);
+        this.pageName = this.props.getText(this.columnsSchema.pageName)
+        this.scriptId = `${this.pageName} (${this.scriptName})`
+      } catch (error) {
+        this.throwError(`No page/database ID found, does this page/db exist? Was it added manually?`)
+      }
     }
-    this.logger = new Logger(this.scriptId)
     this.scriptLoopHandle = null;
   }
 
@@ -55,7 +57,7 @@ class ScriptHelper {
 
   flushErrors() {
     var ret = this.errorsList.length > 0 ? this.errorsList.map((x) => x.msg).join("\n> ") : "";
-    // this.logger.log(`**** [${this.pageName}] FLUSHING ERRORS ****\n${ret}\n`)
+    this.logger.log(`**** [${this.pageName}] FLUSHING ERRORS ****${ret}`)
     this.errorsList = [];
     return ret;
   }
@@ -78,6 +80,8 @@ class ScriptHelper {
 
   async getParamsJson() {
     var codeBlock = null;
+    let jsonParams = {};
+    jsonParams['databaseId'] = this.databaseId.replaceAll("-", "");
     try {
       const paramsCaption = `params_${this.scriptData.name}`;
       var blocks = await this.notion.retrievePageBlocks(this.entry.id);
@@ -97,23 +101,28 @@ class ScriptHelper {
       }
       var paramBlockLink = `https://www.notion.so/gabryxx7/${this.databaseId}-${codeBlock.parent.page_id.replaceAll("-", "")}#${codeBlock.id.replaceAll("-", "")}`;
       var newProp = new PropsHelper().addLink(this.columnsSchema.scriptParams, paramBlockLink, true, "Parameters")
-      await this.notion.updatePage(this.entry.id, newProp.build())
+      await this.notion.updatePage(this.entry.id, newProp.build());
+      jsonParams = {...jsonParams, ...JSON.parse(codeBlock.code.text[0].plain_text)};
+      // fsPromises.writeFile(`./logs/${this.pageName}_Params_PRE.json`, JSON.stringify(jsonParams))
+      // fsPromises.writeFile(`./logs/${this.pageName}_Params_POST.json`, JSON.stringify(jsonParams))
     } catch (error) {
-      this.throwError("No parameters found", error)
+      this.throwError("Error getting parameters data from script entry: No parameters found!", error)
     }
-    var jsonParams = JSON.parse(codeBlock.code.text[0].plain_text);
-    // fsPromises.writeFile(`./logs/${this.pageName}_Params_PRE.json`, JSON.stringify(jsonParams))
-    jsonParams['databaseId'] = this.databaseId.replaceAll("-", "");
-    // fsPromises.writeFile(`./logs/${this.pageName}_Params_POST.json`, JSON.stringify(jsonParams))
     return jsonParams;
   }
 
   async createScriptInstance() {
+    this.logger.log(`*** Instantiating ${this.scriptData.className} for [${this.scriptId}] ***`)
+    let params = {};
     try {
-      this.logger.log(`*** Instantiating ${this.scriptData.className} for [${this.scriptId}] ***`)
-      var params = await this.getParamsJson();
+      params = await this.getParamsJson();
       params = this.scriptData.class.paramsSchema.checkParams(params);
-      this.refreshTime = params['refreshTime'] ? params['refreshTime'] : this.refreshTime;
+    } catch (error) {
+      this.throwError(`Error getting parameters for script: ${this.scriptData.className}, id: [${this.scriptId}] `, error);
+    }
+
+    try {
+      this.refreshTime = params['refreshTime'] ?? this.refreshTime;
       this.scriptInstance = new this.scriptData.class(this, this.notion, params);
     } catch (error) {
       this.throwError(`Error instantiating ${this.scriptData.className} for [${this.scriptId}] `, error);
@@ -122,7 +131,7 @@ class ScriptHelper {
   }
 
   shouldStop() {
-    return ([ScriptStatus.STOPPED.id, ScriptStatus.DISABLED.id, ScriptStatus.ERROR.id].includes(this.scriptStatus.id) || !this.enabledStatus)
+    return (!this.enabledStatus || [ScriptStatus.STOPPED.id, ScriptStatus.DISABLED.id, ScriptStatus.ERROR.id].includes(this.scriptStatus.id))
   }
 
   async startScript() {
@@ -152,18 +161,20 @@ class ScriptHelper {
       return;
     }
     this.updateStatus(ScriptStatus.RUNNING);
-    // this.logger.log(`Update`)
-    if(this.scriptInstance != null) this.scriptInstance.update();
+    if(this.scriptInstance != null){
+      this.scriptInstance.update();
+    }
+    this.logger.log(`Updating master DB script entry`)
     this.notion.getUpdatedDBEntry(this.masterDatabaseID, this.columnsSchema.pageId, this.databaseId)
       .then(async (res) => {
-        // this.logger.log(`Updated db entry : ${res.results.length}`)
+        this.logger.log(`Updated db entry : ${res.results.length}`)
         // this.logger.log(res.results[0])
         await this.updateProps(res.results[0]);
-        this.updateScriptEntry()
-          .then(() => setTimeout(() => this.update(), this.refreshTime))
-          .catch((error) => this.throwError(error))
       })
-      .catch((error) => this.throwError(error))
+      .catch((error) => this.throwError(`Error updating DB entry for ${this.databaseId}`, error))
+      .finally(() =>  this.updateScriptEntry()
+        .then(() => setTimeout(() => this.update(), this.refreshTime))
+        .catch((error) => this.throwError(`Error updating script entrt for ${this.databaseId}`, error)))
   }
 
   getProps() {
@@ -197,6 +208,7 @@ class ScriptHelper {
   }
 
   async updateProps(newEntry = null) {
+    if(!this.enabledStatus) return;
     if (newEntry != null) {
       this.entry = newEntry;
       this.props.addCheckbox(newEntry.properties[this.columnsSchema.enabledStatus].checkbox);

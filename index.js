@@ -47,9 +47,10 @@ class ScriptsManager {
   async startScripts(){
     this.logger.log("**** Starting scripts! ****")
     for (const [key, scriptEntry] of Object.entries(this.scriptEntries)) {
+      if(!scriptEntry.enabledStatus) return;
       await scriptEntry.startScript();
       await sleep(500); // This is needed to avoid Error 409 "Conflict while saving", it's caused by Notion internal working. See: https://www.reddit.com/r/Notion/comments/s8uast/error_deleting_all_the_blocks_in_a_page/
-      // this.logger.log("After Wait")
+      this.logger.log("After Wait")
     }
   }
 
@@ -93,10 +94,13 @@ class ScriptsManager {
             }
           }
         }
-        this.scriptEntries[entry.id] = new ScriptHelper(this.notion, entry, scriptData, this.masterDatabaseID, this.columnsSchema);
         if(!scriptData){
-          this.scriptEntries[entry.id].throwError(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`)
+          this.scriptEntries[entry.id].throwError(`No script found with the name ${scriptName} for ${this.scriptEntries[entry.id].scriptId}`);
+          continue;
         }
+        const newScriptEntry = new ScriptHelper(this.notion, entry, scriptData, this.masterDatabaseID, this.columnsSchema);
+        if(!newScriptEntry.enabledStatus) continue;
+        this.scriptEntries[entry.id] = newScriptEntry;
       } else{
         this.scriptEntries[entry.id].updateProps(entry);
       }
@@ -106,7 +110,7 @@ class ScriptsManager {
     this.logger.log("**** Updating attached DBs metadata ****")
     try{
       var response =  await this.notion.getAttachedDBs();
-      response.results.map((attachedDb) => {
+      response.results.forEach((attachedDb) => {
         if(this.isMasterDatabase(attachedDb)){
           if(this.masterDatabaseObj == null){
             this.logger.log(`MasterDB Found! ${attachedDb.id}`)
@@ -114,6 +118,9 @@ class ScriptsManager {
           this.masterDatabaseObj = attachedDb;
           return;
         }
+
+
+        if(!config.UPDATE_MASTER_VIEW) return;
         // Checking whether the attached database is already listed in one of the entries
         // Can be confusing: Iterating the row of the master database and looking for the attached DB's Page ID
         for (const [key, value] of Object.entries(this.scriptEntries)) {
@@ -131,8 +138,8 @@ class ScriptsManager {
           .build()
           
         this.notion.createPageInDb(this.masterDatabaseID, props)
-          .then((response) => this.logger.log(`New page created {response.id}`))
-          .catch((error) => this.logger.error("Error creating page for new Attached DB", error))
+          .then((response) => this.logger.log(`New page created ${response.id}`))
+          .catch((error) => this.logger.error(`Error creating page for new Attached DB ${attachedDb.id}`, error))
       })  
     }catch(error){
       this.logger.error("Error retreiving attached DBs", error)

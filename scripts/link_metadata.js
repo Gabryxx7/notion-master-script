@@ -5,7 +5,25 @@ const cheerio = require("cheerio");
 const Cite = require('citation-js')
 const { PropsHelper } = require('../Helpers/PropsHelper.js')
 const { ParamsSchema } = require('../Helpers/ParamsHelpers.js')
+var { Logger, cleanLogs } = require("../Helpers/Logger.js")
 const LINK_SPLIT_REGEX = /\n|,|(?=https)|(?=http)/;
+
+const defaultParams = {
+    databaseId: "bd245688bc904c49be07c87e0619b49f",
+    scihubUrl: "https://sci-hub.ru",
+    columns: {
+        status: "Script Processed",
+        title: "Name",
+        author: "Author/Channel",
+        pdfLink: "PDF",
+        link: "Link",
+        type: "Type",
+        bibtexCitation: "BibTex",
+        APACitation: "APA",
+        scihubLink: "Sci-Hub Link",
+    },
+    refreshTime: 20000
+  }
 
 class MetadataHelper {
     static SCIHUB_URL = "https://sci-hub.ru";
@@ -95,10 +113,12 @@ class MetadataHelper {
             catch(error){
                 this.logger.log(`Error getting scihub PDF link ${error.message}`)
             }
+            scihubPdfLink = (!scihubPdfLink || scihubPdfLink.includes('null')) ? scihubUrl : scihubPdfLink;
             this.logger.log(`SCIHUB pdf Link for ${scihubUrl}: ${scihubPdfLink}`)
+            console.log(citationJSON)
             return {
                 title: citationJSON.title,
-                author: citationJSON.author.map((x) => x.given + " " + x.family),
+                author: (citationJSON.author ?? citationJSON.editor)?.map((x) => x.given + " " + x.family) ?? "",
                 type: "Paper",
                 bibtexCitation: bibtexCit,
                 APACitation: apaCit,
@@ -133,25 +153,15 @@ class NotionLinkUpdater {
     static paramsSchema = new ParamsSchema()
         .addParam("databaseId", true)
         .addParam("scihubUrl", false, MetadataHelper.SCIHUB_URL)
-        .addParam("columns", false,
-        {
-            status: 'Script Processed',
-            title: 'Name',
-            author: 'Author/Channel',
-            link: 'Link',
-            type: 'Type',
-            bibtexCitation: 'BibTex Citation',
-            APACitation: 'APA Citation',
-            scihubLink: 'Sci-Hub Link',
-            pdfLink: 'PDF Link'
-        })
+        .addParam("columns", false, defaultParams.columns)
         .addParam("refreshTime", false, 5000);
     // Name: Needed?
     constructor(scriptHelper, notion, params) {
         this.scriptHelper = scriptHelper;
-        this.logger = this.scriptHelper.logger;
+        this.logger = this.scriptHelper?.logger ?? new Logger("NotionLinkMetadata");
         this.notion = notion;
-        this.params = params;
+        this.params = {...defaultParams, ...params};
+        this.refreshTime = this.params?.refreshTime ?? defaultParams.refreshTime;
         this.metadataHelper = new MetadataHelper(this.logger, this.params.scihubUrl);
         this.databaseId = this.params.databaseId;
         this.columnsSchema = this.params.columns;
@@ -162,21 +172,25 @@ class NotionLinkUpdater {
     }
 
     async update() {
-        this.entries = await this.notion.getDBEntries(this.databaseId)
-        this.entries = this.entries
-        .map((page) => this.processPage(page))
-        .filter((p) => {
-            return !p.status;
-            // try {
-            //     return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
-            //     // this.logger.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
-            // } catch (error) {
-            //     this.scriptHelper.throwError("ERROR filtering pages!", error)
-            //     this.logger.log("ERROR filtering pages!", error)
-            //     return false;
-            // }
-        })
-        .map(async (entry) => this.processUrlEntry(entry))
+        this.logger.log(`Getting Link metadata DB entries`)
+        try{
+            this.entries = await this.notion.getDBEntries(this.databaseId)
+        } catch(error){
+            this.logger.log(`Error getting updated DB entries for link-metadata database ${this.databaseId}`);
+        }
+        this.entries?.map(page => this.processPage(page))
+            .filter((p) => {
+                return !p.status;
+                // try {
+                //     return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
+                //     this.logger.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
+                // } catch (error) {
+                //     this.scriptHelper.throwError("ERROR filtering pages!", error)
+                //     this.logger.log("ERROR filtering pages!", error)
+                //     return false;
+                // }
+            })
+            .forEach(async (entry) => this.processUrlEntry(entry).catch((error) => this.logger.log(`Error processing URL ${entry}`)))
     }
 
     processPage(page) {
@@ -186,7 +200,7 @@ class NotionLinkUpdater {
             page.properties[this.columnsSchema.title].title.map(({ plain_text }) => plain_text).join("") : null;
         const link =  this.columnsSchema.link in page.properties ? page.properties[this.columnsSchema.link] : null;
         const author =  this.columnsSchema.author in page.properties ? page.properties[this.columnsSchema.author].multi_select : null;
-        // this.logger.log(`Link ${link}`);
+        // this.logger.log(`Link`, link);
         const newPage = {
             page: page,
             status,
@@ -199,7 +213,7 @@ class NotionLinkUpdater {
 
     createUpdatePage(entry, metadata, createNew=false){
         if(!metadata) return;
-        const authors = metadata.author.map((x) => { return { 'name': x } });
+        const authors = metadata.author?.map((x) => { return { 'name': x } });
         var props = new PropsHelper(null, entry.page.properties)
             .addTitle(this.columnsSchema.title, metadata.title)
             .addMultiSelect(this.columnsSchema.author, authors)
@@ -211,7 +225,7 @@ class NotionLinkUpdater {
             .addRichText(this.columnsSchema.APACitation, metadata.APACitation)
             .addCheckbox(this.columnsSchema.status, true)
             .build()
-            // this.logger.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
+            this.logger.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
         if(createNew){
             this.notion.createPageInDb(this.databaseId, props)
                 .catch((error) => { this.logger.error("Error creating page!", error.message) })
@@ -261,13 +275,11 @@ class NotionLinkUpdater {
         }
         urls = urls.concat(linksUrls)
         urls = urls.filter((x) => x != '');
-        this.logger.log(urls)
+        urls?.forEach(x => this.logger.log(x))
         if(urls.length <= 0) return;
-
-        for (let [index, url] of urls.entries(urls)) {
-            const metadata = await this.metadataHelper.getLinkMetadata(url);
-            this.createUpdatePage(entry, metadata, index > 0);
-        }
+        urls.forEach((url, index) => this.metadataHelper.getLinkMetadata(url)
+            .then(metadata => this.createUpdatePage(entry, metadata, index > 0))
+        )
     }
 }
 

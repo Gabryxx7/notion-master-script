@@ -16,10 +16,10 @@ class PageObserver {
             author: 'Author/Channel',
             link: 'Link',
             type: 'Type',
-            bibtexCitation: 'BibTex Citation',
-            APACitation: 'APA Citation',
+            bibtexCitation: 'BibTex',
+            APACitation: 'APA',
             scihubLink: 'Sci-Hub Link',
-            pdfLink: 'PDF Link'
+            pdfLink: 'PDF'
         })
         .addParam("refreshTime", false, 5000);
     // Name: Needed?
