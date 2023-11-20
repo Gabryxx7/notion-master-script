@@ -8,6 +8,7 @@ const { ParamsSchema } = require('../Helpers/ParamsHelpers.js')
 var { Logger, cleanLogs } = require("../Helpers/Logger.js")
 const LINK_SPLIT_REGEX = /\n|,|(?=https)|(?=http)/;
 
+const citationCharLimit = 2000;
 const defaultParams = {
     databaseId: "bd245688bc904c49be07c87e0619b49f",
     scihubUrl: "https://sci-hub.ru",
@@ -101,7 +102,15 @@ class MetadataHelper {
             const citation = await Cite.input(url);
             const citationJSON = citation[0];
             const citationObj = new Cite(citation);
-            const bibtexCit = citationObj.format('biblatex')
+            let abstract = citationObj.data[0]?.abstract;
+            let bibtexCit = citationObj.format('biblatex')
+
+            if(bibtexCit.length > citationCharLimit && abstract){
+                const toRemove = (bibtexCit.length - citationCharLimit) + 1;
+                citationObj.data[0].abstract = abstract.substring(0, abstract.length-toRemove) 
+                bibtexCit = citationObj.format('biblatex');
+                this.logger.log(`Citation over ${citationCharLimit} chars: Limiting abstract to ${abstract.length-toRemove} chars. Total chars in the end: ${bibtexCit.length} `)
+            }
             const apaCit = citationObj.format('citation', {
                 template: 'apa'
             })
