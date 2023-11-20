@@ -44,6 +44,7 @@ class PropsHelper{
         return this;
     }
     addNumber(name, number){
+        if(!number) return this;
         this.newProps[name] = { number: number };
         return this;
     }
@@ -90,49 +91,49 @@ class PropsHelper{
 
     get(name){
         const prop = !this.props[name];
-        try{
-            return this._get(prop)
-        } catch(error){
-            console.log(`Error getting property ${name} of type ${prop?.type}`, error);
-        }
+        return this._get(prop)
     }
 
     _get(data){
-        switch(data?.type){
-            case PROP_TYPE.checkbox:
-                return data.checkbox;
-            case PROP_TYPE.link:
-            case PROP_TYPE.url:
-                return data.url;
-            case PROP_TYPE.title:
-                return data.title?.map(block => this._get(block));
-            case PROP_TYPE.name:
-                return data.name;
-            case PROP_TYPE.status:
-                return data.status.name;
-            case PROP_TYPE.select:
-                return data.select.name;
-            case PROP_TYPE.number:
-                return data.number;
-            case PROP_TYPE.rich_text:
-                return data.rich_text?.map(block => this._get(block));
-            case PROP_TYPE.text:
-                return data.plain_text;
-            case PROP_TYPE.created_by:
-                return data.created_by?.name;
-            case PROP_TYPE.people:
-                return data.people?.map(person => person?.name);
-            case PROP_TYPE.multi_select:
-                return data.multi_select;
-            case PROP_TYPE.unique_id:
-                return data.unique_id.number;
-            case PROP_TYPE.created_time:
-                return Date.parse(data.created_time);
-            case PROP_TYPE.last_edited_time:
-                return Date.parse(data.last_edited_time);
-            case PROP_TYPE.formula:
-                return this._get(data.formula);
-            default: return data;
+        try{
+            switch(data?.type){
+                case PROP_TYPE.checkbox:
+                    return data.checkbox;
+                case PROP_TYPE.link:
+                case PROP_TYPE.url:
+                    return data.url;
+                case PROP_TYPE.title:
+                    return data.title?.map(block => this._get(block));
+                case PROP_TYPE.name:
+                    return data.name;
+                case PROP_TYPE.status:
+                    return data.status?.name;
+                case PROP_TYPE.select:
+                    return data.select?.name;
+                case PROP_TYPE.number:
+                    return data.number;
+                case PROP_TYPE.rich_text:
+                    return data.rich_text?.map(block => this._get(block));
+                case PROP_TYPE.text:
+                    return data.plain_text;
+                case PROP_TYPE.created_by:
+                    return data.created_by?.name;
+                case PROP_TYPE.people:
+                    return data.people?.map(person => person?.name);
+                case PROP_TYPE.multi_select:
+                    return data.multi_select;
+                case PROP_TYPE.unique_id:
+                    return data.unique_id?.number;
+                case PROP_TYPE.created_time:
+                    return Date.parse(data.created_time);
+                case PROP_TYPE.last_edited_time:
+                    return Date.parse(data.last_edited_time);
+                case PROP_TYPE.formula:
+                    return this._get(data.formula);
+                default: return data;
+            }
+        } catch(error){
+            console.log(`Error getting property ${name} of type ${prop?.type}`, error);
         }
 
     }

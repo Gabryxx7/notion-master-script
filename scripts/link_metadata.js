@@ -193,7 +193,7 @@ class NotionLinkUpdater {
                 direction: "descending"
             }]
             this.entries = await this.notion.getDBEntries(this.databaseId, sorts);
-            // fsPromises.writeFile(`./${this.databaseId}_data.json`, JSON.stringify(this.entries));
+            fsPromises.writeFile(`./${this.databaseId}_data.json`, JSON.stringify(this.entries));
         } catch(error){
             this.logger.log(`Error getting updated DB entries for link-metadata database ${this.databaseId}`, error);
         }
@@ -205,21 +205,12 @@ class NotionLinkUpdater {
         const lastId = !this.entries ? 0 : this.entries.map(p => p.props[cols.index]).reduce((x, y) => x > y ? x : y) ?? 0;
         this.logger.log(`Found ${unprocessed.length} NEW entries, lastID`, lastId);
         await Promise.all(this.entries.map(async (page, i) => {
-            if(!page.props[cols.status]){
-                await this.processURL(page)
-                    .catch((error) => this.logger.log(`Error processing URL`, error))
-            } else {
-                this.logger.log(`Skipping processed page: ${page.props[cols.title]}`)
-            }
-            if(!page.props[cols.index]){
-                await this.notion.updatePage(page.id, page.props.addNumber(cols.index, i).build())
-                    .catch(error => this.logger.error(`Error updating page ${page.id}`, error))
-                    .then(() => this.logger.log(`Updated ID for: ${page.props[cols.title]}`))
-            }
+            return this.processPage(page, this.entries.length - i)
+                    .catch((error) => this.logger.log(`Error processing Page ${page.props[cols.title]}`, error))
         }));
     }
 
-    createUpdatePage(page, metadata, createNew=false){
+    createUpdatePage(page, metadata, createNew=false, rowIndex=null){
         this.logger.log(`Updating page ${page.id}`);
         if(!metadata) return;
         let authors = null;
@@ -238,6 +229,7 @@ class NotionLinkUpdater {
             .addRichText(this.columns.bibtexCitation, metadata.bibtexCitation)
             .addRichText(this.columns.APACitation, metadata.APACitation)
             .addCheckbox(this.columns.status, true)
+            .addNumber(this.columns.index, rowIndex)
             .build()
             this.logger.log(`Updating page with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columns)}`)
         if(createNew){
@@ -272,29 +264,38 @@ class NotionLinkUpdater {
         return blocks;
     }
 
-    async processURL(page) {
-        const pageBlocks = await this.notion.retrievePageBlocks(page.id)
-        this.logger.log(pageBlocks)
-        const blocks = await this.getBlocksData(pageBlocks.results);
-        
-        var urls = blocks;
-        var linksUrls = [];
-        try{
-            linksUrls = page.props[cols.link].split(LINK_SPLIT_REGEX)
+    async processPage(page, rowIndex) {
+        const title = page.props[cols.title];
+        if(!page.props[cols.status]){
+            const pageBlocks = await this.notion.retrievePageBlocks(page.id)
+            this.logger.log(pageBlocks)
+            const blocks = await this.getBlocksData(pageBlocks.results);
+            
+            var urls = blocks;
+            var linksUrls = [];
+            try{
+                linksUrls = [page.props[cols.link]]
+                if(!linksUrls || linksUrls.length <= 0){
+                    linksUrls = title ?? [];
+                }
+            } catch(error){}
+            linksUrls = linksUrls.join('').split(LINK_SPLIT_REGEX)
+            urls = urls.concat(linksUrls)
+            urls = urls.filter((x) => x != '');
+            urls?.forEach(x => this.logger.log(x))
+            if(urls.length <= 0) return;
+            urls.forEach((url, i) => this.metadataHelper.getLinkMetadata(url)
+                .then(metadata => this.createUpdatePage(page, metadata, i > 0, rowIndex+i))
+                .catch(error => this.logger.error(`Error updating page ${page.id}`, error))
+            )
+        } else {
+            // this.logger.log(`Skipping processed page: ${title}`)
+            if(!page.props[cols.index]){
+                this.notion.updatePage(page.id, page.props.addNumber(cols.index, rowIndex).build())
+                    .catch(error => this.logger.error(`Error updating ID for page ${title}`, error))
+                    .then(() => this.logger.log(`Updated ID for: ${title}`))
+            }
         }
-        catch(error){
-        }
-        if(linksUrls.length <= 0){
-            linksUrls = page.props[cols.title].split(LINK_SPLIT_REGEX)
-        }
-        urls = urls.concat(linksUrls)
-        urls = urls.filter((x) => x != '');
-        urls?.forEach(x => this.logger.log(x))
-        if(urls.length <= 0) return;
-        urls.forEach((url, index) => this.metadataHelper.getLinkMetadata(url)
-            .then(metadata => this.createUpdatePage(entry, metadata, index > 0))
-            .catch(error => this.logger.error(`Error updating page ${page.id}`, error))
-        )
     }
 }
 
