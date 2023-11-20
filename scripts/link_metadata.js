@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const sleep = require("timers/promises").setTimeout;
 const urlMetadata = require('url-metadata')
 const axios = require('axios');
 const cheerio = require("cheerio"); 
@@ -199,7 +200,7 @@ class NotionLinkUpdater {
                 //     return false;
                 // }
             })
-            .forEach(async (entry) => this.processUrlEntry(entry).catch((error) => this.logger.log(`Error processing URL ${entry}`)))
+            .forEach(async (entry) => this.processUrlEntry(entry).catch((error) => this.logger.log(`Error processing URL`, error)))
     }
 
     processPage(page) {
@@ -255,9 +256,9 @@ class NotionLinkUpdater {
     async getBlocksData(blockList){
         var blocks = [];
         for(var block of blockList){
-            const blockData = await this.notion.blocks.retrieve({
+            let blockData = await this.notion?.blocks?.retrieve({
                 block_id: block.id
-            });
+            }) ?? block;
             await sleep(250)
             try{
                 for(var blockText of blockData.paragraph.text){
@@ -275,6 +276,7 @@ class NotionLinkUpdater {
     async processUrlEntry(entry) {
         this.logger.log(`Found new entries to process. Using regex: ${LINK_SPLIT_REGEX}`)
         const pageBlocks = await this.notion.retrievePageBlocks(entry.page.id)
+        this.logger.log(pageBlocks)
         const blocks = await this.getBlocksData(pageBlocks.results);
         
         var urls = blocks;
