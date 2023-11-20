@@ -101,7 +101,7 @@ class MetadataHelper {
             const citation = await Cite.input(url);
             const citationJSON = citation[0];
             const citationObj = new Cite(citation);
-            const bibtexCit = citationObj.format('bibtex')
+            const bibtexCit = citationObj.format('biblatex')
             const apaCit = citationObj.format('citation', {
                 template: 'apa'
             })
@@ -213,7 +213,12 @@ class NotionLinkUpdater {
 
     createUpdatePage(entry, metadata, createNew=false){
         if(!metadata) return;
-        const authors = metadata.author?.map((x) => { return { 'name': x } });
+        let authors = null;
+        try{
+            authors = metadata.author?.map((x) => { return { 'name': x } });
+        } catch(error) {
+            this.logger.log(`Error getting authors names : ${error}`)
+        }
         var props = new PropsHelper(null, entry.page.properties)
             .addTitle(this.columnsSchema.title, metadata.title)
             .addMultiSelect(this.columnsSchema.author, authors)
