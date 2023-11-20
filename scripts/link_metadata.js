@@ -7,25 +7,30 @@ const Cite = require('citation-js')
 const { PropsHelper } = require('../Helpers/PropsHelper.js')
 const { ParamsSchema } = require('../Helpers/ParamsHelpers.js')
 var { Logger, cleanLogs } = require("../Helpers/Logger.js")
+const fsPromises = require('fs').promises;
 const LINK_SPLIT_REGEX = /\n|,|(?=https)|(?=http)/;
 
 const citationCharLimit = 2000;
+const cols = {
+    added: 'Date Added',
+    status: "Script Processed",
+    title: "Name",
+    author: "Author/Channel",
+    pdfLink: "PDF",
+    link: "Link",
+    type: "Type",
+    bibtexCitation: "BibTex",
+    APACitation: "APA",
+    scihubLink: "Sci-Hub Link",
+    index: "ID"
+}
 const defaultParams = {
     databaseId: "bd245688bc904c49be07c87e0619b49f",
     scihubUrl: "https://sci-hub.ru",
-    columns: {
-        status: "Script Processed",
-        title: "Name",
-        author: "Author/Channel",
-        pdfLink: "PDF",
-        link: "Link",
-        type: "Type",
-        bibtexCitation: "BibTex",
-        APACitation: "APA",
-        scihubLink: "Sci-Hub Link",
-    },
-    refreshTime: 20000
-  }
+    refreshTime: 20000,
+    columns: cols,
+    index_col: cols.added
+}
 
 class MetadataHelper {
     static SCIHUB_URL = "https://sci-hub.ru";
@@ -125,7 +130,6 @@ class MetadataHelper {
             }
             scihubPdfLink = (!scihubPdfLink || scihubPdfLink.includes('null')) ? scihubUrl : scihubPdfLink;
             this.logger.log(`SCIHUB pdf Link for ${scihubUrl}: ${scihubPdfLink}`)
-            console.log(citationJSON)
             return {
                 title: citationJSON.title,
                 author: (citationJSON.author ?? citationJSON.editor)?.map((x) => x.given + " " + x.family) ?? "",
@@ -174,7 +178,7 @@ class NotionLinkUpdater {
         this.refreshTime = this.params?.refreshTime ?? defaultParams.refreshTime;
         this.metadataHelper = new MetadataHelper(this.logger, this.params.scihubUrl);
         this.databaseId = this.params.databaseId;
-        this.columnsSchema = this.params.columns;
+        this.columns = this.params.columns ?? columns;
         this.entries = [];
         //     setInterval((databaseId) => getEntriesFromNotionDatabase(databaseId), 50000)
         //     updateUnprocessedEntries(databaseId)
@@ -184,44 +188,39 @@ class NotionLinkUpdater {
     async update() {
         this.logger.log(`Getting Link metadata DB entries`)
         try{
-            this.entries = await this.notion.getDBEntries(this.databaseId)
+            const sorts = [{
+                property: this.columns.added,
+                direction: "descending"
+            }]
+            this.entries = await this.notion.getDBEntries(this.databaseId, sorts);
+            // fsPromises.writeFile(`./${this.databaseId}_data.json`, JSON.stringify(this.entries));
         } catch(error){
-            this.logger.log(`Error getting updated DB entries for link-metadata database ${this.databaseId}`);
+            this.logger.log(`Error getting updated DB entries for link-metadata database ${this.databaseId}`, error);
         }
-        this.entries?.map(page => this.processPage(page))
-            .filter((p) => {
-                return !p.status;
-                // try {
-                //     return (!p.status && ((p.link && p.link.url && p.link.url !== "") || p.title !== ""))
-                //     this.logger.log(unprocessed.length > 0 ? `Found ${unprocessed.length} page(s) to process!` : `No new entries to process!`);
-                // } catch (error) {
-                //     this.scriptHelper.throwError("ERROR filtering pages!", error)
-                //     this.logger.log("ERROR filtering pages!", error)
-                //     return false;
-                // }
-            })
-            .forEach(async (entry) => this.processUrlEntry(entry).catch((error) => this.logger.log(`Error processing URL`, error)))
+        this.entries = this.entries.sort(p => p.props[cols.added]);
+        const unprocessed = this.entries?.filter(p => {
+            // console.log(p.props);
+            return !p.props[cols.status];
+        });
+        const lastId = !this.entries ? 0 : this.entries.map(p => p.props[cols.index]).reduce((x, y) => x > y ? x : y) ?? 0;
+        this.logger.log(`Found ${unprocessed.length} NEW entries, lastID`, lastId);
+        await Promise.all(this.entries.map(async (page, i) => {
+            if(!page.props[cols.status]){
+                await this.processURL(page)
+                    .catch((error) => this.logger.log(`Error processing URL`, error))
+            } else {
+                this.logger.log(`Skipping processed page: ${page.props[cols.title]}`)
+            }
+            if(!page.props[cols.index]){
+                await this.notion.updatePage(page.id, page.props.addNumber(cols.index, i).build())
+                    .catch(error => this.logger.error(`Error updating page ${page.id}`, error))
+                    .then(() => this.logger.log(`Updated ID for: ${page.props[cols.title]}`))
+            }
+        }));
     }
 
-    processPage(page) {
-        const statusProperty = this.columnsSchema.status in page.properties ? page.properties[this.columnsSchema.status] : null;
-        const status = statusProperty ? statusProperty.checkbox : false;
-        const title = this.columnsSchema.title in page.properties ?
-            page.properties[this.columnsSchema.title].title.map(({ plain_text }) => plain_text).join("") : null;
-        const link =  this.columnsSchema.link in page.properties ? page.properties[this.columnsSchema.link] : null;
-        const author =  this.columnsSchema.author in page.properties ? page.properties[this.columnsSchema.author].multi_select : null;
-        // this.logger.log(`Link`, link);
-        const newPage = {
-            page: page,
-            status,
-            title,
-            author,
-            link,
-        };
-        return newPage
-    }
-
-    createUpdatePage(entry, metadata, createNew=false){
+    createUpdatePage(page, metadata, createNew=false){
+        this.logger.log(`Updating page ${page.id}`);
         if(!metadata) return;
         let authors = null;
         try{
@@ -229,27 +228,27 @@ class NotionLinkUpdater {
         } catch(error) {
             this.logger.log(`Error getting authors names : ${error}`)
         }
-        var props = new PropsHelper(null, entry.page.properties)
-            .addTitle(this.columnsSchema.title, metadata.title)
-            .addMultiSelect(this.columnsSchema.author, authors)
-            .addSelect(this.columnsSchema.type, metadata.type)
-            .addLink(this.columnsSchema.link, metadata.url)
-            .addLink(this.columnsSchema.scihubLink, metadata.scihubLink)
-            .addLink(this.columnsSchema.pdfLink, metadata.pdfLink, true, "PDF")
-            .addRichText(this.columnsSchema.bibtexCitation, metadata.bibtexCitation)
-            .addRichText(this.columnsSchema.APACitation, metadata.APACitation)
-            .addCheckbox(this.columnsSchema.status, true)
+        var props = page.props
+            .addTitle(this.columns.title, metadata.title)
+            .addMultiSelect(this.columns.author, authors)
+            .addSelect(this.columns.type, metadata.type)
+            .addLink(this.columns.link, metadata.url)
+            .addLink(this.columns.scihubLink, metadata.scihubLink)
+            .addLink(this.columns.pdfLink, metadata.pdfLink, true, "PDF")
+            .addRichText(this.columns.bibtexCitation, metadata.bibtexCitation)
+            .addRichText(this.columns.APACitation, metadata.APACitation)
+            .addCheckbox(this.columns.status, true)
             .build()
-            this.logger.log(`Updating entry with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columnsSchema)}`)
+            this.logger.log(`Updating page with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columns)}`)
         if(createNew){
             this.notion.createPageInDb(this.databaseId, props)
                 .catch((error) => { this.logger.error("Error creating page!", error.message) })
                 .then(() => {this.logger.log(`Created new page for: ${metadata.url} (${metadata.title})`)})
         }
         else{
-            this.notion.updatePage(entry.page.id,props)
-                .catch((error) => { this.logger.error("Error updating page!", error.message) })
-                .then(() => {this.logger.log(`Updated page for: ${metadata.url} (${metadata.title})`)})
+            this.notion.updatePage(page.id, props)
+                .catch(error => this.logger.error("Error updating page!", error.message))
+                .then(() => this.logger.log(`Updated page for: ${metadata.url} (${metadata.title})`))
         }
     }
 
@@ -273,21 +272,20 @@ class NotionLinkUpdater {
         return blocks;
     }
 
-    async processUrlEntry(entry) {
-        this.logger.log(`Found new entries to process. Using regex: ${LINK_SPLIT_REGEX}`)
-        const pageBlocks = await this.notion.retrievePageBlocks(entry.page.id)
+    async processURL(page) {
+        const pageBlocks = await this.notion.retrievePageBlocks(page.id)
         this.logger.log(pageBlocks)
         const blocks = await this.getBlocksData(pageBlocks.results);
         
         var urls = blocks;
         var linksUrls = [];
         try{
-            linksUrls = entry.link.url.split(LINK_SPLIT_REGEX)
+            linksUrls = page.props[cols.link].split(LINK_SPLIT_REGEX)
         }
         catch(error){
         }
         if(linksUrls.length <= 0){
-            linksUrls = entry.title.split(LINK_SPLIT_REGEX)
+            linksUrls = page.props[cols.title].split(LINK_SPLIT_REGEX)
         }
         urls = urls.concat(linksUrls)
         urls = urls.filter((x) => x != '');
@@ -295,6 +293,7 @@ class NotionLinkUpdater {
         if(urls.length <= 0) return;
         urls.forEach((url, index) => this.metadataHelper.getLinkMetadata(url)
             .then(metadata => this.createUpdatePage(entry, metadata, index > 0))
+            .catch(error => this.logger.error(`Error updating page ${page.id}`, error))
         )
     }
 }

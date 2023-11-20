@@ -1,89 +1,155 @@
+const PROP_TYPE = {
+    title: 'title',
+    text: 'text',
+    rich_text: 'rich_text',
+    status: 'status',
+    checkbox: 'checkbox',
+    select: 'select',
+    multi_select: 'multi_select',
+    unique_id: 'unique_id',
+    created_by: 'created_by',
+    link: 'link',
+    url: 'url',
+    number: 'number',
+    formula: 'formula',
+    name: 'name',
+    date: 'date',
+    people: 'people',
+    created_time: 'created_time',
+    last_edited_time: 'last_edited_time',
+}
+
 class PropsHelper{
-    constructor(props=null, pageProps=null){
-        this.props = !props ? {} : props;
-        this.pageProps = pageProps;
-    }
-    update(newProps){
-        for(const [propName, prop] of Object.entries(newProps)) {
-            this.props[propName] = newProps[propName];
+    constructor(props){
+        this.props = {};
+        this.newProps = {};
+        for(let k in props){
+            const prop = props[k];
+            this[k] = this.props[k] = this._get(prop);
         }
     }
-    isPropInDB(propName){
-        if(!this.pageProps) return true;
-        return propName in this.pageProps;
+    update(newProps){
+        for(const [name, prop] of Object.entries(newProps)) {
+            this.props[name] = newProps[name];
+        }
     }
-    addStatus(propName, statusName){
-        if(!this.isPropInDB(propName)) return this;
+    isPropInDB(name){
+        if(!this.props) return true;
+        return name in this.props;
+    }
+    addStatus(name, statusName){
+        if(!this.isPropInDB(name)) return this;
         if(!statusName) return this;
-        this.props[propName] = { status: { name: statusName}};
+        this.newProps[name] = { status: { name: statusName}};
         return this;
     }
-    getStatus(propName){
-        return this.props[propName]?.status?.name;
-    }
-    addCheckbox(propName, ticked){
-        if(!this.isPropInDB(propName)) return this;
-        this.props[propName] = { checkbox: ticked };
+    addNumber(name, number){
+        this.newProps[name] = { number: number };
         return this;
     }
-    getCheckbox(propName){
-        return this.props[propName]?.checkbox;
+    addCheckbox(name, ticked){
+        if(!this.isPropInDB(name)) return this;
+        this.newProps[name] = { checkbox: ticked };
+        return this;
     }
-    addRichText(propName, textContent){
-        if(!this.isPropInDB(propName)) return this;
+    addRichText(name, textContent){
+        if(!this.isPropInDB(name)) return this;
         if(!textContent) return this;
-        this.props[propName] = { rich_text: [{text: { content: textContent}}]};
+        this.newProps[name] = { rich_text: [{text: { content: textContent}}]};
         return this;
     }
-    getText(propName){
-        return this.props[propName]?.rich_text[0]?.plain_text;
-    }
-    addTitle(propName, textContent) {
-        if(!this.isPropInDB(propName)) return this;
+    addTitle(name, textContent) {
+        if(!this.isPropInDB(name)) return this;
         if(!textContent) return this;
-        this.props[propName] = { title: [{ text: { content: textContent }}] }
+        this.newProps[name] = { title: [{ text: { content: textContent }}] }
         return this;
     }
-    getTitle(propName){
-        return this.props[propName]?.title[0]?.plain_text;
-    }
-    addMultiSelect(propName, namesList){
-        if(!this.isPropInDB(propName)) return this;
+    addMultiSelect(name, namesList){
+        if(!this.isPropInDB(name)) return this;
         if(!namesList) return this;
-        this.props[propName] = { multi_select: namesList}
+        this.newProps[name] = { multi_select: namesList}
         return this;
     }
-    addSelect(propName, selectedName) {
-        if(!this.isPropInDB(propName)) return this;
+    addSelect(name, selectedName) {
+        if(!this.isPropInDB(name)) return this;
         if(!selectedName) return this;
-        this.props[propName] = { select: { name: selectedName}}
+        this.newProps[name] = { select: { name: selectedName}}
         return this;
     }
-    getSelect(propName){
-        return this.props[propName]?.select?.name;
-    }
-    addLink(propName, url, as_text=false, title=null) {
+    addLink(name, url, as_text=false, title=null) {
         if(!title) title = url;
         if(as_text){
             if(!title) title = url;
-            this.props[propName] = { rich_text: [{text: { content: title, link: {url: url}}}]};
+            this.newProps[name] = { rich_text: [{text: { content: title, link: {url: url}}}]};
         }
         else{
-            this.props[propName] = {url: url}  
+            this.newProps[name] = {url: url}  
         }  
         return this;
     }
-    getLink(propName, from_text=false){
+
+    get(name){
+        const prop = !this.props[name];
         try{
-            if(from_text) return this.props[propName]?.rich_text[0]?.text?.link?.url;
-            return this.props[propName]?.url;
-        }
-        catch(error){
-            return null;
+            return this._get(prop)
+        } catch(error){
+            console.log(`Error getting property ${name} of type ${prop?.type}`, error);
         }
     }
+
+    _get(data){
+        switch(data?.type){
+            case PROP_TYPE.checkbox:
+                return data.checkbox;
+            case PROP_TYPE.link:
+            case PROP_TYPE.url:
+                return data.url;
+            case PROP_TYPE.title:
+                return data.title?.map(block => this._get(block));
+            case PROP_TYPE.name:
+                return data.name;
+            case PROP_TYPE.status:
+                return data.status.name;
+            case PROP_TYPE.select:
+                return data.select.name;
+            case PROP_TYPE.number:
+                return data.number;
+            case PROP_TYPE.rich_text:
+                return data.rich_text?.map(block => this._get(block));
+            case PROP_TYPE.text:
+                return data.plain_text;
+            case PROP_TYPE.created_by:
+                return data.created_by?.name;
+            case PROP_TYPE.people:
+                return data.people?.map(person => person?.name);
+            case PROP_TYPE.multi_select:
+                return data.multi_select;
+            case PROP_TYPE.unique_id:
+                return data.unique_id.number;
+            case PROP_TYPE.created_time:
+                return Date.parse(data.created_time);
+            case PROP_TYPE.last_edited_time:
+                return Date.parse(data.last_edited_time);
+            case PROP_TYPE.formula:
+                return this._get(data.formula);
+            default: return data;
+        }
+
+    }
     build(){
+        const ret = {...this.newProps};
+        this.newProps = {};
+        return ret;
+    }
+
+    toString(){
         return this.props;
+    }
+    get [Symbol.toString]() {
+        return this.props;
+    }
+    get [Symbol.toStringTag]() {
+        return "PropsHelper";
     }
 }
 
