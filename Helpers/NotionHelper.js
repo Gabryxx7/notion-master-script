@@ -40,6 +40,12 @@ class NotionHelper{
         });
     }
 
+    async getDBPage(dbId){
+        return this.notion.databases.retrieve({
+                database_id: dbId,
+        });
+    }
+
     async getDBEntries(dbId, sorts=null) {
         let pages = [];
         let cursor = undefined;

@@ -172,12 +172,14 @@ class NotionLinkUpdater {
     // Name: Needed?
     constructor(scriptHelper, notion, params) {
         this.scriptHelper = scriptHelper;
+        this.initialized = false;
         this.logger = this.scriptHelper?.logger ?? new Logger("NotionLinkMetadata");
         this.notion = notion;
         this.params = {...defaultParams, ...params};
         this.refreshTime = this.params?.refreshTime ?? defaultParams.refreshTime;
         this.metadataHelper = new MetadataHelper(this.logger, this.params.scihubUrl);
         this.databaseId = this.params.databaseId;
+        this.databasePage = null;
         this.columns = this.params.columns ?? columns;
         this.entries = [];
         //     setInterval((databaseId) => getEntriesFromNotionDatabase(databaseId), 50000)
@@ -186,28 +188,34 @@ class NotionLinkUpdater {
     }
 
     async update() {
-        this.logger.log(`Getting Link metadata DB entries`)
+        // this.logger.log(`Getting Link metadata DB entries`)
         try{
             const sorts = [{
                 property: this.columns.added,
                 direction: "descending"
             }]
             this.entries = await this.notion.getDBEntries(this.databaseId, sorts);
-            fsPromises.writeFile(`./${this.databaseId}_data.json`, JSON.stringify(this.entries));
         } catch(error){
             this.logger.log(`Error getting updated DB entries for link-metadata database ${this.databaseId}`, error);
         }
         this.entries = this.entries.sort(p => p.props[cols.added]);
+        if(!this.initialized){
+            this.databasePage = await this.notion.getDBPage(this.databaseId);
+            this.logger.log(`Starting on database '${this.databasePage?.title[0]?.plain_text}' (${this.databaseId}) with a total of ${this.entries.length} entries`)
+            this.databasePage.entries = this.entries;
+            fsPromises.writeFile(`./${this.databaseId}_data.json`, JSON.stringify(this.databasePage));
+            this.initialized = true;
+        }
         const unprocessed = this.entries?.filter(p => {
             // console.log(p.props);
             return !p.props[cols.status];
         });
         const lastId = !this.entries ? 0 : this.entries.map(p => p.props[cols.index]).reduce((x, y) => x > y ? x : y) ?? 0;
-        this.logger.log(`Found ${unprocessed.length} NEW entries, lastID`, lastId);
-        await Promise.all(this.entries.map(async (page, i) => {
-            return this.processPage(page, this.entries.length - i)
+        unprocessed.length > 0 && this.logger.log(`Found ${unprocessed.length} NEW entries, lastID`, lastId);
+        this.entries.map((page, i) => {
+            this.processPage(page, this.entries.length - i)
                     .catch((error) => this.logger.log(`Error processing Page ${page.props[cols.title]}`, error))
-        }));
+        })
     }
 
     createUpdatePage(page, metadata, createNew=false, rowIndex=null){
@@ -267,21 +275,16 @@ class NotionLinkUpdater {
     async processPage(page, rowIndex) {
         const title = page.props[cols.title];
         if(!page.props[cols.status]){
-            const pageBlocks = await this.notion.retrievePageBlocks(page.id)
-            this.logger.log(pageBlocks)
-            const blocks = await this.getBlocksData(pageBlocks.results);
-            
-            var urls = blocks;
+            // const pageBlocks = await this.notion.retrievePageBlocks(page.id)
+            // const blocks = await this.getBlocksData(pageBlocks.results);
+            // var urls = blocks;
+            let urls = [];
             var linksUrls = [];
             try{
-                linksUrls = [page.props[cols.link]]
-                if(!linksUrls || linksUrls.length <= 0){
-                    linksUrls = title ?? [];
-                }
+                linksUrls.push(page.props[cols.link], ...title)
             } catch(error){}
             linksUrls = linksUrls.join('').split(LINK_SPLIT_REGEX)
-            urls = urls.concat(linksUrls)
-            urls = urls.filter((x) => x != '');
+            urls = urls.concat(linksUrls).filter((x) => x != '');
             urls?.forEach(x => this.logger.log(x))
             if(urls.length <= 0) return;
             urls.forEach((url, i) => this.metadataHelper.getLinkMetadata(url)

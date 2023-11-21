@@ -16,7 +16,7 @@ const updater = new NotionLinkUpdater(null, notionHelper, {});
 
 const updateLoop = () => {
     updater.update()
-        .then(() => updater.logger.log(`Database updated! ${updater.databaseId}`))
+        // .then(() => updater.logger.log(`Database updated! ${updater.databaseId}`))
         .catch((error) => updater.logger.log(`Error updating database ${updater.databaseId}`, error))
         .finally(() => setTimeout(updateLoop, updater.refreshTime))
 }
