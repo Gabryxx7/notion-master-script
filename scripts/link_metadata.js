@@ -35,7 +35,7 @@ const defaultParams = {
     skipProcessed: true,
     databaseId: "bd245688bc904c49be07c87e0619b49f",
     scihubUrl: "https://sci-hub.ru",
-    refreshTime: 20000,
+    refreshTime: 5000,
     columns: cols,
     index_col: cols.added
 }
@@ -244,14 +244,14 @@ class NotionLinkUpdater {
         }
         var props = page.props
             .addNumber(this.columns.index, rowIndex)
-            // .addTitle(this.columns.title, metadata.title)
-            // .addMultiSelect(this.columns.author, authors)
+            .addTitle(this.columns.title, metadata.title)
+            .addMultiSelect(this.columns.author, authors)
             .addSelect(this.columns.type, metadata.type)
-            // .addLink(this.columns.link, metadata.url)
-            // .addLink(this.columns.scihubLink, metadata.scihubLink)
-            // .addLink(this.columns.pdfLink, metadata.pdfLink, true, "PDF")
-            // .addRichText(this.columns.bibtexCitation, metadata.bibtexCitation)
-            // .addRichText(this.columns.APACitation, metadata.APACitation)
+            .addLink(this.columns.link, metadata.url)
+            .addLink(this.columns.scihubLink, metadata.scihubLink)
+            .addLink(this.columns.pdfLink, metadata.pdfLink, true, "PDF")
+            .addRichText(this.columns.bibtexCitation, metadata.bibtexCitation)
+            .addRichText(this.columns.APACitation, metadata.APACitation)
             .addCheckbox(this.columns.status, true)
             .addRichText(this.columns.abstract, metadata.abstract)
             .addRichText(this.columns.event, metadata.event+"")
