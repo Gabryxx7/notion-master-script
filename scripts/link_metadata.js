@@ -9,8 +9,9 @@ const { ParamsSchema } = require('../Helpers/ParamsHelpers.js')
 var { Logger, cleanLogs } = require("../Helpers/Logger.js")
 const fsPromises = require('fs').promises;
 const LINK_SPLIT_REGEX = /\n|,|(?=https)|(?=http)/;
-
-const citationCharLimit = 2000;
+const YEAR_REGEX = /(\d{4})/;
+const BATCH_SIZE = 10;
+const cellCharLimit = 2000;
 const cols = {
     added: 'Date Added',
     status: "Script Processed",
@@ -22,9 +23,16 @@ const cols = {
     bibtexCitation: "BibTex",
     APACitation: "APA",
     scihubLink: "Sci-Hub Link",
-    index: "ID"
+    index: "ID",
+    year: "Year",
+    abstract: "Abstract",
+    publisher: 'Publisher',
+    event: 'Published In',
+    citations: 'Citations',
+    references: 'Refs'
 }
 const defaultParams = {
+    skipProcessed: true,
     databaseId: "bd245688bc904c49be07c87e0619b49f",
     scihubUrl: "https://sci-hub.ru",
     refreshTime: 20000,
@@ -36,10 +44,7 @@ class MetadataHelper {
     static SCIHUB_URL = "https://sci-hub.ru";
     constructor(logger=null, scihubUrl=null){
         this.scihubUrl = scihubUrl == null ? MetadataHelper.SCIHUB_URL : scihubUrl;
-        if(!logger)
-            this.logger = console;
-        else
-            this.logger = logger;
+        this.logger = logger ?? console;
     }
 
     async getLinkMetadata(url) {
@@ -107,15 +112,18 @@ class MetadataHelper {
         try {
             const citation = await Cite.input(url);
             const citationJSON = citation[0];
+            let abstract = citationJSON.abstract;
+            if(abstract && abstract.length > cellCharLimit){
+                abstract = abstract.substring(0, cellCharLimit-1);
+            }
             const citationObj = new Cite(citation);
-            let abstract = citationObj.data[0]?.abstract;
             let bibtexCit = citationObj.format('biblatex')
 
-            if(bibtexCit.length > citationCharLimit && abstract){
-                const toRemove = (bibtexCit.length - citationCharLimit) + 1;
+            if(bibtexCit.length > cellCharLimit && abstract){
+                const toRemove = (bibtexCit.length - cellCharLimit) + 1;
                 citationObj.data[0].abstract = abstract.substring(0, abstract.length-toRemove) 
                 bibtexCit = citationObj.format('biblatex');
-                this.logger.log(`Citation over ${citationCharLimit} chars: Limiting abstract to ${abstract.length-toRemove} chars. Total chars in the end: ${bibtexCit.length} `)
+                this.logger.log(`Citation over ${cellCharLimit} chars: Limiting abstract to ${abstract.length-toRemove} chars. Total chars in the end: ${bibtexCit.length} `)
             }
             const apaCit = citationObj.format('citation', {
                 template: 'apa'
@@ -130,10 +138,17 @@ class MetadataHelper {
             }
             scihubPdfLink = (!scihubPdfLink || scihubPdfLink.includes('null')) ? scihubUrl : scihubPdfLink;
             this.logger.log(`SCIHUB pdf Link for ${scihubUrl}: ${scihubPdfLink}`)
+            let years = citationJSON?.created ? citationJSON?.created['date-time'].match(YEAR_REGEX) : null;;
             return {
+                abstract: abstract,
                 title: citationJSON.title,
+                references: citationJSON['reference-count'],
+                citations: citationJSON['is-referenced-by-count'],
+                event: citationJSON.event ?? citationJSON['container-title'],
+                publisher: citationJSON.publisher,
+                year: !years ? '' : years[0],
                 author: (citationJSON.author ?? citationJSON.editor)?.map((x) => x.given + " " + x.family) ?? "",
-                type: "Paper",
+                type: citationJSON.type ?? "Paper",
                 bibtexCitation: bibtexCit,
                 APACitation: apaCit,
                 scihubLink: scihubUrl,
@@ -179,6 +194,7 @@ class NotionLinkUpdater {
         this.refreshTime = this.params?.refreshTime ?? defaultParams.refreshTime;
         this.metadataHelper = new MetadataHelper(this.logger, this.params.scihubUrl);
         this.databaseId = this.params.databaseId;
+        this.skipProcessed = this.params.skipProcessed;
         this.databasePage = null;
         this.columns = this.params.columns ?? columns;
         this.entries = [];
@@ -206,12 +222,11 @@ class NotionLinkUpdater {
             fsPromises.writeFile(`./${this.databaseId}_data.json`, JSON.stringify(this.databasePage));
             this.initialized = true;
         }
-        const unprocessed = this.entries?.filter(p => {
-            // console.log(p.props);
-            return !p.props[cols.status];
-        });
+        
+        let unprocessed = this.entries?.filter(p => !p.props[cols.status]);
         const lastId = !this.entries ? 0 : this.entries.map(p => p.props[cols.index]).reduce((x, y) => x > y ? x : y) ?? 0;
         unprocessed.length > 0 && this.logger.log(`Found ${unprocessed.length} NEW entries, lastID`, lastId);
+
         this.entries.map((page, i) => {
             this.processPage(page, this.entries.length - i)
                     .catch((error) => this.logger.log(`Error processing Page ${page.props[cols.title]}`, error))
@@ -228,16 +243,22 @@ class NotionLinkUpdater {
             this.logger.log(`Error getting authors names : ${error}`)
         }
         var props = page.props
-            .addTitle(this.columns.title, metadata.title)
-            .addMultiSelect(this.columns.author, authors)
-            .addSelect(this.columns.type, metadata.type)
-            .addLink(this.columns.link, metadata.url)
-            .addLink(this.columns.scihubLink, metadata.scihubLink)
-            .addLink(this.columns.pdfLink, metadata.pdfLink, true, "PDF")
-            .addRichText(this.columns.bibtexCitation, metadata.bibtexCitation)
-            .addRichText(this.columns.APACitation, metadata.APACitation)
-            .addCheckbox(this.columns.status, true)
             .addNumber(this.columns.index, rowIndex)
+            // .addTitle(this.columns.title, metadata.title)
+            // .addMultiSelect(this.columns.author, authors)
+            .addSelect(this.columns.type, metadata.type)
+            // .addLink(this.columns.link, metadata.url)
+            // .addLink(this.columns.scihubLink, metadata.scihubLink)
+            // .addLink(this.columns.pdfLink, metadata.pdfLink, true, "PDF")
+            // .addRichText(this.columns.bibtexCitation, metadata.bibtexCitation)
+            // .addRichText(this.columns.APACitation, metadata.APACitation)
+            .addCheckbox(this.columns.status, true)
+            .addRichText(this.columns.abstract, metadata.abstract)
+            .addRichText(this.columns.event, metadata.event+"")
+            .addRichText(this.columns.publisher, metadata.publisher)
+            .addNumber(this.columns.year, metadata.year)
+            .addNumber(this.columns.citations, metadata.citations)
+            .addNumber(this.columns.references, metadata.references)
             .build()
             this.logger.log(`Updating page with props: ${JSON.stringify(props)}, ${JSON.stringify(this.columns)}`)
         if(createNew){
@@ -274,18 +295,19 @@ class NotionLinkUpdater {
 
     async processPage(page, rowIndex) {
         const title = page.props[cols.title];
-        if(!page.props[cols.status]){
+        const toProcess = !page.props[cols.status] || !this.skipProcessed;
+        if(toProcess){
             // const pageBlocks = await this.notion.retrievePageBlocks(page.id)
             // const blocks = await this.getBlocksData(pageBlocks.results);
             // var urls = blocks;
             let urls = [];
             var linksUrls = [];
             try{
-                linksUrls.push(page.props[cols.link], ...title)
+                linksUrls.push(...(page.props[cols.link] ?? title))
             } catch(error){}
             linksUrls = linksUrls.join('').split(LINK_SPLIT_REGEX)
             urls = urls.concat(linksUrls).filter((x) => x != '');
-            urls?.forEach(x => this.logger.log(x))
+            // urls?.forEach(x => this.logger.log(x))
             if(urls.length <= 0) return;
             urls.forEach((url, i) => this.metadataHelper.getLinkMetadata(url)
                 .then(metadata => this.createUpdatePage(page, metadata, i > 0, rowIndex+i))

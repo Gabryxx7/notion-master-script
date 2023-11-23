@@ -44,8 +44,9 @@ class PropsHelper{
         return this;
     }
     addNumber(name, number){
-        if(!number) return this;
-        this.newProps[name] = { number: number };
+        if(number){
+            this.newProps[name] = { number: parseInt(number) };
+        }
         return this;
     }
     addCheckbox(name, ticked){
@@ -55,14 +56,16 @@ class PropsHelper{
     }
     addRichText(name, textContent){
         if(!this.isPropInDB(name)) return this;
-        if(!textContent) return this;
-        this.newProps[name] = { rich_text: [{text: { content: textContent}}]};
+        if(textContent){
+            this.newProps[name] = { rich_text: [{text: { content: textContent}}]};
+        }
         return this;
     }
     addTitle(name, textContent) {
         if(!this.isPropInDB(name)) return this;
-        if(!textContent) return this;
-        this.newProps[name] = { title: [{ text: { content: textContent }}] }
+        if(textContent){
+            this.newProps[name] = { title: [{ text: { content: textContent }}] }
+        }
         return this;
     }
     addMultiSelect(name, namesList){
