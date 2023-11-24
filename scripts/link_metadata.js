@@ -12,6 +12,7 @@ const LINK_SPLIT_REGEX = /\n|,|(?=https)|(?=http)/;
 const YEAR_REGEX = /(\d{4})/;
 const BATCH_SIZE = 10;
 const cellCharLimit = 2000;
+
 const cols = {
     added: 'Date Added',
     status: "Script Processed",
@@ -74,18 +75,18 @@ class MetadataHelper {
     }
     
     async getYoutubeMetadata(url) {
-        const requestUrl = `https://youtube.com/oembed?url=${url}&format=json`;
         try {
-            let data = await axios.get(requestUrl);
-            data = data.data;
+            const data = await urlMetadata(url);
+            let years = data['uploadDate'] ?? data['uploadDate'].match(YEAR_REGEX);
             return {
-                title: data.title,
-                author: [data.author_name],
-                type: "Video"
+                year: years,
+                title: data['og:title'] !== "" ? data['og:title'] : data.title,
+                author: [data['og:site_name'] !== "" ? data['og:site_name'] : data.author !== "" ? data.author : data.source],
+                type: "YouTube"
             }
         }
         catch (error) {
-            this.logger.log(`Error YouTube metadata ${error.message}`);
+            this.logger.log(`Error getting URL metadata for ${url}: ${error.error}, ${error.message}`);
         };
     }
 
@@ -138,7 +139,7 @@ class MetadataHelper {
             }
             scihubPdfLink = (!scihubPdfLink || scihubPdfLink.includes('null')) ? scihubUrl : scihubPdfLink;
             this.logger.log(`SCIHUB pdf Link for ${scihubUrl}: ${scihubPdfLink}`)
-            let years = citationJSON?.created ? citationJSON?.created['date-time'].match(YEAR_REGEX) : null;;
+            let years = citationJSON?.created ? citationJSON?.created['date-time'].match(YEAR_REGEX) : null;
             return {
                 abstract: abstract,
                 title: citationJSON.title,
@@ -249,7 +250,7 @@ class NotionLinkUpdater {
             .addSelect(this.columns.type, metadata.type)
             .addLink(this.columns.link, metadata.url)
             .addLink(this.columns.scihubLink, metadata.scihubLink)
-            .addLink(this.columns.pdfLink, metadata.pdfLink, true, "PDF")
+            .addLink(this.columns.pdfLink, metadata.pdfLink, "PDF")
             .addRichText(this.columns.bibtexCitation, metadata.bibtexCitation)
             .addRichText(this.columns.APACitation, metadata.APACitation)
             .addCheckbox(this.columns.status, true)

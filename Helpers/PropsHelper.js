@@ -80,14 +80,13 @@ class PropsHelper{
         this.newProps[name] = { select: { name: selectedName}}
         return this;
     }
-    addLink(name, url, as_text=false, title=null) {
-        if(!title) title = url;
-        if(as_text){
-            if(!title) title = url;
+    addLink(name, url, title=null) {
+        if(!url) return this;
+        if(title){
             this.newProps[name] = { rich_text: [{text: { content: title, link: {url: url}}}]};
         }
         else{
-            this.newProps[name] = {url: url}  
+            this.newProps[name] = { url: url }  
         }  
         return this;
     }
